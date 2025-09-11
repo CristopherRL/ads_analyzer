@@ -1,54 +1,107 @@
 # === File: main.py ===
 
-from datetime import datetime
-from dateutil.relativedelta import relativedelta
-from src.facebook_api import initialize_facebook_api, get_campaign_data_for_period
-from src.azure_llm import analizar_dataframes_con_llm
-from config import FB_AD_ACCOUNT_ID
+from fastapi import FastAPI, Depends, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.orm import Session
+from src.database import get_db, test_connection
+from src.schemas import HealthResponse
+from config import DEBUG
+import logging
 
-def run_analysis():
-    """Función principal que orquesta todo el proceso."""
-    
-    # 1. Conectarse a la API de Facebook
-    initialize_facebook_api()
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-    # 2. Calcular los períodos de tiempo
-    today = datetime.today().date()
-    last_month_end = today.replace(day=1) - relativedelta(days=1)
-    last_month_start = last_month_end.replace(day=1)
-    prev_month_end = last_month_start - relativedelta(days=1)
-    prev_month_start = prev_month_end.replace(day=1)
+# Create FastAPI application
+app = FastAPI(
+    title="Digital Marketing Analysis Agent",
+    description="AI-powered backend for Facebook Ads performance analysis using LangChain",
+    version="1.0.0",
+    debug=DEBUG
+)
 
-    # 3. Obtener datos de campañas (solo Lead Form)
-    df_last_month = get_campaign_data_for_period(FB_AD_ACCOUNT_ID, last_month_start, last_month_end)
-    df_prev_month = get_campaign_data_for_period(FB_AD_ACCOUNT_ID, prev_month_start, prev_month_end)
+# Configure CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Configure appropriately for production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-    # 4. Analizar con LLM y guardar el resultado
-    if not df_last_month.empty and not df_prev_month.empty:
-        nombre_mes_actual = last_month_start.strftime("%B de %Y")
-        nombre_mes_anterior = prev_month_start.strftime("%B de %Y")
+@app.get("/", response_model=dict)
+async def root():
+    """
+    Root endpoint with basic API information.
+    """
+    return {
+        "message": "Digital Marketing Analysis Agent API",
+        "version": "1.0.0",
+        "status": "running",
+        "docs": "/docs"
+    }
+
+@app.get("/health", response_model=HealthResponse)
+async def health_check():
+    """
+    Health check endpoint to verify service and database status.
+    Returns service status and database connection status.
+    """
+    try:
+        # Test database connection
+        db_connected = test_connection()
         
-        conclusion_llm = analizar_dataframes_con_llm(df_last_month, df_prev_month, nombre_mes_actual, nombre_mes_anterior)
+        return HealthResponse(
+            status="ok" if db_connected else "degraded",
+            database_connected=db_connected
+        )
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail=f"Service unhealthy: {str(e)}"
+        )
+
+@app.get("/health/db")
+async def database_health_check(db: Session = Depends(get_db)):
+    """
+    Detailed database health check endpoint.
+    Tests database connection and basic operations.
+    """
+    try:
+        # Test basic database operation
+        result = db.execute("SELECT 1 as test")
+        test_value = result.scalar()
         
-        if conclusion_llm:
-            print("\n\n--- CONCLUSIONES DEL EXPERTO EN MARKETING DIGITAL (IA) ---\n")
-            print(conclusion_llm)
-            
-            # Construir y guardar el archivo de reporte
-            id_client = FB_AD_ACCOUNT_ID.replace('act_', '')
-            action_type = "Lead_Form"
-            period_str = f"{prev_month_start.strftime('%Y_%m')}-{last_month_start.strftime('%Y_%m')}"
-            timestamp_str = datetime.now().strftime('%Y%m%d_%H%M%S')
-            file_name = f"reporte_fb_ads__act_{id_client}__{action_type}_{period_str}_{timestamp_str}.txt"
-            
-            try:
-                with open(file_name, "w", encoding="utf-8") as f:
-                    f.write(conclusion_llm)
-                print(f"\n✅ Conclusión guardada exitosamente en el archivo: {file_name}")
-            except Exception as e:
-                print(f"\n❌ Error al guardar el archivo de conclusión: {e}")
-    else:
-        print("\n🟡 No se generó análisis de IA porque falta información de Lead Form en uno o ambos meses.")
+        if test_value == 1:
+            return {
+                "status": "healthy",
+                "database": "connected",
+                "test_query": "successful"
+            }
+        else:
+            raise HTTPException(
+                status_code=503,
+                detail="Database test query failed"
+            )
+    except Exception as e:
+        logger.error(f"Database health check failed: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail=f"Database unhealthy: {str(e)}"
+        )
+
+# Placeholder for future endpoints
+# TODO: Add /chat endpoint in Etapa 4
+# TODO: Add /accounts endpoint for Facebook account management
+# TODO: Add /analytics endpoint for campaign analysis
 
 if __name__ == "__main__":
-    run_analysis()
+    import uvicorn
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=DEBUG,
+        log_level="info"
+    )

@@ -20,3 +20,6 @@ AZURE_API_VERSION = "2024-02-01"
 
 # --- Credenciales de PostgreSQL ---
 DATABASE_CONNECTION_STRING = os.getenv('DATABASE_CONNECTION_STRING')
+
+# --- Configuración de la Aplicación ---
+DEBUG = os.getenv('DEBUG', 'False').lower() == 'true'
