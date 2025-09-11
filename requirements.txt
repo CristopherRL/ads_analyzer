@@ -1,0 +1,6 @@
+# === File: requirements.txt ===
+
+pandas
+python-dotenv
+facebook_business
+openai
