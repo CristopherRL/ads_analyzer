@@ -5,6 +5,7 @@ from langchain.agents import AgentExecutor, create_openai_tools_agent
 from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_openai import ChatOpenAI
 from langchain.schema import BaseMessage
+from sqlalchemy import and_
 
 from src.agent.memory import DatabaseConversationMemory, create_memory
 from src.tools.facebook_tools import list_available_clients_tool, facebook_ads_analysis_tool
@@ -119,13 +120,16 @@ class DigitalMarketingAgent:
             db_gen = get_db()
             db = next(db_gen)
             
-            # Get active prompt version
+            # Get active prompt version (assuming 'system' as prompt_name)
             active_prompt = db.query(PromptVersion).filter(
-                PromptVersion.is_active == True
+                and_(
+                    PromptVersion.prompt_name == 'system',
+                    PromptVersion.is_active == True
+                )
             ).first()
             
             if active_prompt:
-                logger.info(f"Loaded system prompt from database: version {active_prompt.version}")
+                logger.info(f"Loaded system prompt from database: {active_prompt.prompt_name} v{active_prompt.version}")
                 return active_prompt.prompt_text
             else:
                 logger.warning("No active prompt found in database, using file fallback")

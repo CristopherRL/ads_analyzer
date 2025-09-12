@@ -35,23 +35,19 @@ class ApiCache(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     ad_account_id = Column(String(255), nullable=False, index=True, comment="Facebook Ad Account ID")
-    cache_key = Column(String(500), nullable=False, comment="Unique cache identifier")
-    data = Column(JSON, nullable=False, comment="Cached API response data")
+    date_period = Column(String(7), nullable=False, comment="Date period in YYYY-MM format")
+    query_hash = Column(String(64), nullable=False, comment="SHA256 hash of the request")
+    result_json = Column(JSON, comment="Complete API result in JSONB format")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), comment="Cache creation timestamp")
-    expires_at = Column(DateTime(timezone=True), nullable=False, comment="Cache expiration timestamp")
-    
-    # Foreign key relationship
-    facebook_account_id = Column(Integer, nullable=True, comment="Reference to facebook_accounts.id")
-    facebook_account = relationship("FacebookAccount", back_populates="api_caches")
     
     # Indexes for performance
     __table_args__ = (
-        Index('idx_api_cache_account_expires', 'ad_account_id', 'expires_at'),
-        Index('idx_api_cache_key', 'cache_key'),
+        Index('idx_api_cache_account_period', 'ad_account_id', 'date_period'),
+        Index('idx_api_cache_hash', 'query_hash'),
     )
     
     def __repr__(self):
-        return f"<ApiCache(id={self.id}, ad_account_id='{self.ad_account_id}', cache_key='{self.cache_key}')>"
+        return f"<ApiCache(id={self.id}, ad_account_id='{self.ad_account_id}', date_period='{self.date_period}')>"
 
 class ConversationHistory(Base):
     """
@@ -61,10 +57,14 @@ class ConversationHistory(Base):
     __tablename__ = "conversation_history"
     
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(String(255), nullable=False, index=True, comment="User identifier")
     session_id = Column(String(255), nullable=False, index=True, comment="Conversation session identifier")
-    message = Column(Text, nullable=False, comment="User message")
-    response = Column(Text, nullable=False, comment="AI agent response")
+    user_id = Column(String(255), nullable=False, index=True, comment="User identifier")
+    user_prompt = Column(Text, comment="User message/prompt")
+    full_prompt_sent = Column(Text, comment="Complete prompt sent to LLM")
+    llm_response = Column(Text, comment="LLM response")
+    model_params = Column(JSON, comment="Model parameters (temperature, etc.)")
+    tokens_used = Column(Integer, comment="Number of tokens used")
+    estimated_cost_usd = Column(Integer, comment="Estimated cost in USD (scaled by 1000000)")
     timestamp = Column(DateTime(timezone=True), server_default=func.now(), comment="Message timestamp")
     
     # Indexes for performance
@@ -84,13 +84,19 @@ class PromptVersion(Base):
     __tablename__ = "prompt_versions"
     
     id = Column(Integer, primary_key=True, index=True)
-    version = Column(String(50), nullable=False, unique=True, comment="Prompt version identifier")
-    prompt_text = Column(Text, nullable=False, comment="Full prompt text")
+    prompt_name = Column(String(255), nullable=False, comment="Prompt name identifier")
+    version = Column(Integer, nullable=False, comment="Prompt version number")
+    prompt_text = Column(Text, comment="Full prompt text")
     is_active = Column(Boolean, default=False, comment="Whether this version is currently active")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), comment="Version creation timestamp")
     
+    # Unique constraint for prompt_name + version combination
+    __table_args__ = (
+        Index('idx_prompt_name_version', 'prompt_name', 'version', unique=True),
+    )
+    
     def __repr__(self):
-        return f"<PromptVersion(id={self.id}, version='{self.version}', is_active={self.is_active})>"
+        return f"<PromptVersion(id={self.id}, prompt_name='{self.prompt_name}', version={self.version}, is_active={self.is_active})>"
 
 class CampaignPerformanceData(Base):
     """

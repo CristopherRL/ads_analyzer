@@ -84,8 +84,10 @@ class DatabaseConversationMemory(ConversationSummaryBufferMemory):
             # Convert database records to LangChain messages
             messages = []
             for conv in conversations:
-                messages.append(HumanMessage(content=conv.message))
-                messages.append(AIMessage(content=conv.response))
+                if conv.user_prompt:
+                    messages.append(HumanMessage(content=conv.user_prompt))
+                if conv.llm_response:
+                    messages.append(AIMessage(content=conv.llm_response))
             
             # Load messages into memory
             if messages:
@@ -116,8 +118,8 @@ class DatabaseConversationMemory(ConversationSummaryBufferMemory):
             conversation = ConversationHistory(
                 user_id=self.user_id,
                 session_id=self.session_id,
-                message=human_message,
-                response=ai_message,
+                user_prompt=human_message,
+                llm_response=ai_message,
                 timestamp=datetime.now()
             )
             

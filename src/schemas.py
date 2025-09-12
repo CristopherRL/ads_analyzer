@@ -42,9 +42,9 @@ class FacebookAccountResponse(FacebookAccountBase):
 class ApiCacheBase(BaseModel):
     """Base schema for API cache data."""
     ad_account_id: str = Field(..., description="Facebook Ad Account ID")
-    cache_key: str = Field(..., description="Unique cache identifier")
-    data: Dict[str, Any] = Field(..., description="Cached API response data")
-    expires_at: datetime = Field(..., description="Cache expiration timestamp")
+    date_period: str = Field(..., description="Date period in YYYY-MM format")
+    query_hash: str = Field(..., description="SHA256 hash of the request")
+    result_json: Optional[Dict[str, Any]] = Field(None, description="Complete API result in JSONB format")
 
 class ApiCacheCreate(ApiCacheBase):
     """Schema for creating new API cache entry."""
@@ -63,7 +63,12 @@ class ConversationMessage(BaseModel):
     """Schema for conversation message."""
     user_id: str = Field(..., description="User identifier")
     session_id: str = Field(..., description="Conversation session identifier")
-    message: str = Field(..., description="User message")
+    user_prompt: Optional[str] = Field(None, description="User message/prompt")
+    full_prompt_sent: Optional[str] = Field(None, description="Complete prompt sent to LLM")
+    llm_response: Optional[str] = Field(None, description="LLM response")
+    model_params: Optional[Dict[str, Any]] = Field(None, description="Model parameters")
+    tokens_used: Optional[int] = Field(None, description="Number of tokens used")
+    estimated_cost_usd: Optional[int] = Field(None, description="Estimated cost in USD (scaled by 1000000)")
 
 class ConversationResponse(BaseModel):
     """Schema for conversation response."""
@@ -76,8 +81,12 @@ class ConversationHistoryResponse(BaseModel):
     id: int
     user_id: str
     session_id: str
-    message: str
-    response: str
+    user_prompt: Optional[str]
+    full_prompt_sent: Optional[str]
+    llm_response: Optional[str]
+    model_params: Optional[Dict[str, Any]]
+    tokens_used: Optional[int]
+    estimated_cost_usd: Optional[int]
     timestamp: datetime
     
     model_config = ConfigDict(from_attributes=True)
@@ -120,8 +129,9 @@ class ClearSessionResponse(BaseModel):
 
 class PromptVersionBase(BaseModel):
     """Base schema for prompt version data."""
-    version: str = Field(..., description="Prompt version identifier")
-    prompt_text: str = Field(..., description="Full prompt text")
+    prompt_name: str = Field(..., description="Prompt name identifier")
+    version: int = Field(..., description="Prompt version number")
+    prompt_text: Optional[str] = Field(None, description="Full prompt text")
     is_active: bool = Field(default=False, description="Whether this version is currently active")
 
 class PromptVersionCreate(PromptVersionBase):

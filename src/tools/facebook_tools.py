@@ -1,6 +1,7 @@
 # === File: src/tools/facebook_tools.py ===
 
 import pandas as pd
+import hashlib
 from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
 from typing import List, Dict, Any, Optional
@@ -97,23 +98,25 @@ def _get_cached_data(ad_account_id: str, campaign_type: str, start_date: datetim
     Returns:
         Cached data if available and valid, None otherwise
     """
-    cache_key = f"campaign_data_{ad_account_id}_{campaign_type}_{start_date}_{end_date}"
+    # Create date period in YYYY-MM format
+    date_period = start_date.strftime("%Y-%m")
+    query_hash = hashlib.sha256(f"campaign_data_{ad_account_id}_{campaign_type}_{start_date}_{end_date}".encode()).hexdigest()
     
     try:
         # Check for valid cache entry
         cache_entry = db.query(ApiCache).filter(
             and_(
                 ApiCache.ad_account_id == ad_account_id,
-                ApiCache.cache_key == cache_key,
-                ApiCache.expires_at > datetime.now()
+                ApiCache.date_period == date_period,
+                ApiCache.query_hash == query_hash
             )
         ).first()
         
         if cache_entry:
-            logger.info(f"Using cached data for {cache_key}")
-            return cache_entry.data
+            logger.info(f"Using cached data for {ad_account_id} - {date_period}")
+            return cache_entry.result_json
         else:
-            logger.info(f"No valid cache found for {cache_key}")
+            logger.info(f"No valid cache found for {ad_account_id} - {date_period}")
             return None
             
     except Exception as e:
@@ -135,25 +138,31 @@ def _save_to_cache(ad_account_id: str, campaign_type: str, start_date: datetime,
     Returns:
         True if saved successfully, False otherwise
     """
-    cache_key = f"campaign_data_{ad_account_id}_{campaign_type}_{start_date}_{end_date}"
-    expires_at = datetime.now() + timedelta(hours=CACHE_EXPIRATION_HOURS)  # Configurable cache expiration
+    # Create date period in YYYY-MM format
+    date_period = start_date.strftime("%Y-%m")
+    query_hash = hashlib.sha256(f"campaign_data_{ad_account_id}_{campaign_type}_{start_date}_{end_date}".encode()).hexdigest()
     
     try:
-        # Remove any existing cache entries for this key
-        db.query(ApiCache).filter(ApiCache.cache_key == cache_key).delete()
+        # Remove any existing cache entries for this account and period
+        db.query(ApiCache).filter(
+            and_(
+                ApiCache.ad_account_id == ad_account_id,
+                ApiCache.date_period == date_period
+            )
+        ).delete()
         
         # Create new cache entry
         cache_entry = ApiCache(
             ad_account_id=ad_account_id,
-            cache_key=cache_key,
-            data=data,
-            expires_at=expires_at
+            date_period=date_period,
+            query_hash=query_hash,
+            result_json=data
         )
         
         db.add(cache_entry)
         db.commit()
         
-        logger.info(f"Saved data to cache: {cache_key}")
+        logger.info(f"Saved data to cache: {ad_account_id} - {date_period}")
         return True
         
     except Exception as e:
