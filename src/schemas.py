@@ -97,6 +97,25 @@ class ChatResponse(BaseModel):
     timestamp: datetime = Field(default_factory=datetime.now, description="Response timestamp")
     user_id: str = Field(..., description="User identifier")
 
+class SessionInfoResponse(BaseModel):
+    """Schema for session information response."""
+    user_id: str = Field(..., description="User identifier")
+    session_id: str = Field(..., description="Session identifier")
+    message_count: int = Field(..., description="Number of messages in session")
+    has_summary: bool = Field(..., description="Whether session has conversation summary")
+    created_at: Optional[datetime] = Field(None, description="Session creation timestamp")
+
+class ClearSessionRequest(BaseModel):
+    """Schema for clearing session request."""
+    user_id: str = Field(..., description="User identifier")
+    session_id: Optional[str] = Field(None, description="Optional specific session to clear")
+
+class ClearSessionResponse(BaseModel):
+    """Schema for clearing session response."""
+    success: bool = Field(..., description="Whether operation was successful")
+    message: str = Field(..., description="Operation result message")
+    cleared_sessions: int = Field(..., description="Number of sessions cleared")
+
 # === Prompt Version Schemas ===
 
 class PromptVersionBase(BaseModel):

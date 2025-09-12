@@ -4,7 +4,11 @@ from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from src.database import get_db, test_connection
-from src.schemas import HealthResponse
+from src.schemas import (
+    HealthResponse, ChatRequest, ChatResponse, SessionInfoResponse, 
+    ClearSessionRequest, ClearSessionResponse, ErrorResponse
+)
+from src.agent.agent_executor import DigitalMarketingAgent
 from config import DEBUG
 from src.logging_config import setup_logging, get_logger
 
@@ -91,8 +95,160 @@ async def database_health_check(db: Session = Depends(get_db)):
             detail=f"Database unhealthy: {str(e)}"
         )
 
-# Placeholder for future endpoints
-# TODO: Add /chat endpoint in Etapa 4
+# === Chat Endpoints ===
+
+@app.post("/chat", response_model=ChatResponse)
+async def chat_with_agent(request: ChatRequest):
+    """
+    Chat endpoint for conversation with the Digital Marketing Agent.
+    Processes user messages and returns AI agent responses.
+    """
+    try:
+        logger.info(f"Chat request from user {request.user_id}")
+        
+        # Create or get agent instance
+        agent = DigitalMarketingAgent(
+            user_id=request.user_id,
+            session_id=request.session_id
+        )
+        
+        # Process message with agent
+        response_text = agent.process_message(request.message)
+        
+        # Return response
+        return ChatResponse(
+            response=response_text,
+            session_id=agent.session_id,
+            user_id=request.user_id
+        )
+        
+    except Exception as e:
+        logger.error(f"Error in chat endpoint: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error processing chat request: {str(e)}"
+        )
+
+@app.get("/chat/session/{session_id}", response_model=SessionInfoResponse)
+async def get_session_info(session_id: str):
+    """
+    Get information about a specific chat session.
+    """
+    try:
+        logger.info(f"Getting session info for {session_id}")
+        
+        # Extract user_id from session_id (format: timestamp_userid)
+        if "_" in session_id:
+            user_id = "_".join(session_id.split("_")[1:]).replace("_at_", "@").replace("_", ".")
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid session ID format"
+            )
+        
+        # Create agent to get session info
+        agent = DigitalMarketingAgent(
+            user_id=user_id,
+            session_id=session_id
+        )
+        
+        # Get session information
+        session_info = agent.get_session_info()
+        
+        return SessionInfoResponse(
+            user_id=session_info["user_id"],
+            session_id=session_info["session_id"],
+            message_count=session_info["message_count"],
+            has_summary=session_info["has_summary"]
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting session info: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error retrieving session information: {str(e)}"
+        )
+
+@app.delete("/chat/session/{session_id}", response_model=ClearSessionResponse)
+async def clear_session(session_id: str):
+    """
+    Clear a specific chat session.
+    """
+    try:
+        logger.info(f"Clearing session {session_id}")
+        
+        # Extract user_id from session_id
+        if "_" in session_id:
+            user_id = "_".join(session_id.split("_")[1:]).replace("_at_", "@").replace("_", ".")
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid session ID format"
+            )
+        
+        # Create agent and clear session
+        agent = DigitalMarketingAgent(
+            user_id=user_id,
+            session_id=session_id
+        )
+        
+        agent.clear_session()
+        
+        return ClearSessionResponse(
+            success=True,
+            message=f"Session {session_id} cleared successfully",
+            cleared_sessions=1
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error clearing session: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error clearing session: {str(e)}"
+        )
+
+@app.post("/chat/clear", response_model=ClearSessionResponse)
+async def clear_user_sessions(request: ClearSessionRequest):
+    """
+    Clear all sessions for a specific user or a specific session.
+    """
+    try:
+        logger.info(f"Clear sessions request for user {request.user_id}")
+        
+        if request.session_id:
+            # Clear specific session
+            agent = DigitalMarketingAgent(
+                user_id=request.user_id,
+                session_id=request.session_id
+            )
+            agent.clear_session()
+            
+            return ClearSessionResponse(
+                success=True,
+                message=f"Session {request.session_id} cleared successfully",
+                cleared_sessions=1
+            )
+        else:
+            # Clear all sessions for user (placeholder - would need database query)
+            # For now, we'll return a message indicating this feature needs implementation
+            return ClearSessionResponse(
+                success=False,
+                message="Clearing all user sessions not yet implemented. Please specify a session_id.",
+                cleared_sessions=0
+            )
+        
+    except Exception as e:
+        logger.error(f"Error clearing user sessions: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error clearing sessions: {str(e)}"
+        )
+
+# === Future Endpoints (Placeholders) ===
 # TODO: Add /accounts endpoint for Facebook account management
 # TODO: Add /analytics endpoint for campaign analysis
 
