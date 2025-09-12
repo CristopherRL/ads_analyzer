@@ -14,11 +14,10 @@ from pydantic import BaseModel, Field
 from src.database import get_db
 from src.models import FacebookAccount, ApiCache
 from src.facebook_api import get_campaign_data_for_period
-import logging
+from config import CACHE_EXPIRATION_HOURS
+from src.logging_config import get_logger
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # === Input Schemas for Tools ===
 
@@ -137,7 +136,7 @@ def _save_to_cache(ad_account_id: str, campaign_type: str, start_date: datetime,
         True if saved successfully, False otherwise
     """
     cache_key = f"campaign_data_{ad_account_id}_{campaign_type}_{start_date}_{end_date}"
-    expires_at = datetime.now() + timedelta(hours=1)  # Cache for 1 hour
+    expires_at = datetime.now() + timedelta(hours=CACHE_EXPIRATION_HOURS)  # Configurable cache expiration
     
     try:
         # Remove any existing cache entries for this key

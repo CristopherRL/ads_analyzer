@@ -6,11 +6,11 @@ from sqlalchemy.orm import Session
 from src.database import get_db, test_connection
 from src.schemas import HealthResponse
 from config import DEBUG
-import logging
+from src.logging_config import setup_logging, get_logger
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Setup logging
+setup_logging()
+logger = get_logger(__name__)
 
 # Create FastAPI application
 app = FastAPI(

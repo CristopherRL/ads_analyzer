@@ -23,3 +23,25 @@ DATABASE_CONNECTION_STRING = os.getenv('DATABASE_CONNECTION_STRING')
 
 # --- Configuración de la Aplicación ---
 DEBUG = os.getenv('DEBUG', 'False').lower() == 'true'
+
+# --- Configuración de LangChain y Agente ---
+# Memory configuration
+MEMORY_TEMPERATURE = float(os.getenv('MEMORY_TEMPERATURE', '0.1'))
+MEMORY_MAX_TOKEN_LIMIT = int(os.getenv('MEMORY_MAX_TOKEN_LIMIT', '2000'))
+
+# Agent configuration  
+AGENT_TEMPERATURE = float(os.getenv('AGENT_TEMPERATURE', '0.7'))
+AGENT_MAX_TOKENS = int(os.getenv('AGENT_MAX_TOKENS', '2000'))
+AGENT_MAX_ITERATIONS = int(os.getenv('AGENT_MAX_ITERATIONS', '5'))
+
+# Cache configuration
+CACHE_EXPIRATION_HOURS = int(os.getenv('CACHE_EXPIRATION_HOURS', '1'))
+
+# --- Configuración de Logging ---
+LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')
+LOG_FILE = os.getenv('LOG_FILE', 'logs/app.log')
+LOG_FORMAT = os.getenv('LOG_FORMAT', '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+# --- Configuración de Prompts ---
+SYSTEM_PROMPT_SOURCE = os.getenv('SYSTEM_PROMPT_SOURCE', 'database')  # 'default' or 'database'
+DEFAULT_PROMPT_FILE = os.getenv('DEFAULT_PROMPT_FILE', 'src/prompts/default_system_prompt.txt')
