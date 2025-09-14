@@ -12,6 +12,46 @@ class HealthResponse(BaseModel):
     timestamp: datetime = Field(default_factory=datetime.now, description="Response timestamp")
     database_connected: bool = Field(description="Database connection status")
 
+# === User Schemas ===
+
+class UserBase(BaseModel):
+    """Base schema for user data."""
+    email: str = Field(..., description="User email address")
+    name: Optional[str] = Field(None, description="User display name")
+    password: Optional[str] = Field(None, description="User password (for future authentication)")
+
+class UserCreate(UserBase):
+    """Schema for creating a new user."""
+    pass
+
+class UserUpdate(BaseModel):
+    """Schema for updating user data."""
+    name: Optional[str] = None
+    password: Optional[str] = None
+    is_active: Optional[bool] = None
+
+class UserResponse(UserBase):
+    """Schema for user response."""
+    id: int
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+    
+    model_config = ConfigDict(from_attributes=True)
+
+# === Authentication Schemas ===
+
+class LoginRequest(BaseModel):
+    """Schema for login request."""
+    email: str = Field(..., description="User email address")
+
+class LoginResponse(BaseModel):
+    """Schema for login response."""
+    success: bool = Field(..., description="Whether login was successful")
+    message: str = Field(..., description="Login result message")
+    user: Optional[UserResponse] = Field(None, description="User information if login successful")
+    access_token: Optional[str] = Field(None, description="Access token for authenticated requests")
+
 # === Facebook Account Schemas ===
 
 class FacebookAccountBase(BaseModel):
@@ -66,7 +106,7 @@ class ConversationMessage(BaseModel):
     user_prompt: Optional[str] = Field(None, description="User message/prompt")
     full_prompt_sent: Optional[str] = Field(None, description="Complete prompt sent to LLM")
     llm_response: Optional[str] = Field(None, description="LLM response")
-    model_params: Optional[Dict[str, Any]] = Field(None, description="Model parameters")
+    llm_params: Optional[Dict[str, Any]] = Field(None, description="LLM model parameters")
     tokens_used: Optional[int] = Field(None, description="Number of tokens used")
     estimated_cost_usd: Optional[int] = Field(None, description="Estimated cost in USD (scaled by 1000000)")
 
@@ -84,7 +124,7 @@ class ConversationHistoryResponse(BaseModel):
     user_prompt: Optional[str]
     full_prompt_sent: Optional[str]
     llm_response: Optional[str]
-    model_params: Optional[Dict[str, Any]]
+    llm_params: Optional[Dict[str, Any]]
     tokens_used: Optional[int]
     estimated_cost_usd: Optional[int]
     timestamp: datetime

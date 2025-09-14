@@ -1,13 +1,18 @@
 # === File: main.py ===
 
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 from src.database import get_db, test_connection
 from src.schemas import (
     HealthResponse, ChatRequest, ChatResponse, SessionInfoResponse, 
-    ClearSessionRequest, ClearSessionResponse, ErrorResponse
+    ClearSessionRequest, ClearSessionResponse, ErrorResponse,
+    LoginRequest, LoginResponse, UserResponse
 )
+from src.models import User
 from src.agent.agent_executor import DigitalMarketingAgent
 from config import DEBUG
 from src.logging_config import setup_logging, get_logger
@@ -16,6 +21,9 @@ from src.logging_config import setup_logging, get_logger
 setup_logging()
 logger = get_logger(__name__)
 
+# Setup rate limiting
+limiter = Limiter(key_func=get_remote_address)
+
 # Create FastAPI application
 app = FastAPI(
     title="Digital Marketing Analysis Agent",
@@ -23,6 +31,10 @@ app = FastAPI(
     version="1.0.0",
     debug=DEBUG
 )
+
+# Add rate limiting to the app
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Configure CORS
 app.add_middleware(
@@ -46,7 +58,8 @@ async def root():
     }
 
 @app.get("/health", response_model=HealthResponse)
-async def health_check():
+@limiter.limit("30/minute")  # 30 health checks per minute
+async def health_check(request: Request):
     """
     Health check endpoint to verify service and database status.
     Returns service status and database connection status.
@@ -95,31 +108,108 @@ async def database_health_check(db: Session = Depends(get_db)):
             detail=f"Database unhealthy: {str(e)}"
         )
 
+# === Authentication Endpoints ===
+
+@app.post("/auth/login", response_model=LoginResponse)
+@limiter.limit("10/minute")  # 10 login attempts per minute
+async def login(request: Request, login_data: LoginRequest, db: Session = Depends(get_db)):
+    """
+    Simple login endpoint that verifies if email exists in users table.
+    For MVP: only checks if email exists, no password validation yet.
+    """
+    try:
+        logger.info(f"Login attempt for email: {login_data.email}")
+        
+        # Check if user exists in database
+        user = db.query(User).filter(
+            User.email == login_data.email,
+            User.is_active == True
+        ).first()
+        
+        if user:
+            logger.info(f"Successful login for user: {user.email}")
+            return LoginResponse(
+                success=True,
+                message="Login successful",
+                user=UserResponse(
+                    id=user.id,
+                    email=user.email,
+                    name=user.name,
+                    password=None,  # Never return password
+                    is_active=user.is_active,
+                    created_at=user.created_at,
+                    updated_at=user.updated_at
+                ),
+                access_token=f"user_{user.id}_{user.email}"  # Simple token for MVP
+            )
+        else:
+            logger.warning(f"Login failed - user not found: {login_data.email}")
+            return LoginResponse(
+                success=False,
+                message="User not found or inactive",
+                user=None,
+                access_token=None
+            )
+            
+    except Exception as e:
+        logger.error(f"Login error: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Login failed: {str(e)}"
+        )
+
+@app.get("/auth/verify/{email}")
+@limiter.limit("20/minute")  # 20 verification attempts per minute
+async def verify_user(request: Request, email: str, db: Session = Depends(get_db)):
+    """
+    Verify if a user email exists in the system.
+    Useful for frontend to check if user can login.
+    """
+    try:
+        user = db.query(User).filter(
+            User.email == email,
+            User.is_active == True
+        ).first()
+        
+        return {
+            "email": email,
+            "exists": user is not None,
+            "user_id": user.id if user else None
+        }
+        
+    except Exception as e:
+        logger.error(f"User verification error: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Verification failed: {str(e)}"
+        )
+
 # === Chat Endpoints ===
 
 @app.post("/chat", response_model=ChatResponse)
-async def chat_with_agent(request: ChatRequest):
+@limiter.limit("20/minute")  # 20 chat messages per minute
+async def chat_with_agent(request: Request, chat_request: ChatRequest):
     """
     Chat endpoint for conversation with the Digital Marketing Agent.
     Processes user messages and returns AI agent responses.
     """
     try:
-        logger.info(f"Chat request from user {request.user_id}")
+        logger.info(f"Chat request from user {chat_request.user_id}")
         
         # Create or get agent instance
         agent = DigitalMarketingAgent(
-            user_id=request.user_id,
-            session_id=request.session_id
+            user_id=chat_request.user_id,
+            session_id=chat_request.session_id
         )
         
         # Process message with agent
-        response_text = agent.process_message(request.message)
+        response_text = agent.process_message(chat_request.message)
         
         # Return response
         return ChatResponse(
             response=response_text,
             session_id=agent.session_id,
-            user_id=request.user_id
+            user_id=chat_request.user_id
         )
         
     except Exception as e:
@@ -130,7 +220,8 @@ async def chat_with_agent(request: ChatRequest):
         )
 
 @app.get("/chat/session/{session_id}", response_model=SessionInfoResponse)
-async def get_session_info(session_id: str):
+@limiter.limit("30/minute")  # 30 session info requests per minute
+async def get_session_info(request: Request, session_id: str):
     """
     Get information about a specific chat session.
     """
@@ -172,7 +263,8 @@ async def get_session_info(session_id: str):
         )
 
 @app.delete("/chat/session/{session_id}", response_model=ClearSessionResponse)
-async def clear_session(session_id: str):
+@limiter.limit("10/minute")  # 10 session clear requests per minute
+async def clear_session(request: Request, session_id: str):
     """
     Clear a specific chat session.
     """
@@ -212,24 +304,25 @@ async def clear_session(session_id: str):
         )
 
 @app.post("/chat/clear", response_model=ClearSessionResponse)
-async def clear_user_sessions(request: ClearSessionRequest):
+@limiter.limit("5/minute")  # 5 clear all sessions requests per minute
+async def clear_user_sessions(request: Request, clear_request: ClearSessionRequest):
     """
     Clear all sessions for a specific user or a specific session.
     """
     try:
-        logger.info(f"Clear sessions request for user {request.user_id}")
+        logger.info(f"Clear sessions request for user {clear_request.user_id}")
         
-        if request.session_id:
+        if clear_request.session_id:
             # Clear specific session
             agent = DigitalMarketingAgent(
-                user_id=request.user_id,
-                session_id=request.session_id
+                user_id=clear_request.user_id,
+                session_id=clear_request.session_id
             )
             agent.clear_session()
             
             return ClearSessionResponse(
                 success=True,
-                message=f"Session {request.session_id} cleared successfully",
+                message=f"Session {clear_request.session_id} cleared successfully",
                 cleared_sessions=1
             )
         else:

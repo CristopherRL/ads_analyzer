@@ -5,6 +5,28 @@ from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from src.database import Base
 
+class User(Base):
+    """
+    Model for application users.
+    Stores user information and authentication data.
+    """
+    __tablename__ = "users"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String(255), nullable=False, unique=True, index=True, comment="User email address")
+    name = Column(String(255), comment="User display name")
+    password = Column(String(255), comment="User password (for future authentication)")
+    is_active = Column(Boolean, default=True, comment="Whether user account is active")
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), comment="User creation timestamp")
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), comment="User last update timestamp")
+    
+    # Relationships
+    facebook_accounts = relationship("FacebookAccount", back_populates="user")
+    conversations = relationship("ConversationHistory", back_populates="user")
+    
+    def __repr__(self):
+        return f"<User(id={self.id}, email='{self.email}', name='{self.name}')>"
+
 class FacebookAccount(Base):
     """
     Model for Facebook advertising accounts associated with users.
@@ -18,6 +40,10 @@ class FacebookAccount(Base):
     account_name = Column(String(255), comment="Human-readable account name")
     key_vault_secret_name = Column(String(255), nullable=False, unique=True, comment="Azure Key Vault secret name for access token")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), comment="Account creation timestamp")
+    
+    # Foreign key relationship
+    user_id_fk = Column(Integer, nullable=True, comment="Reference to users.id")
+    user = relationship("User", back_populates="facebook_accounts")
     
     # Relationships
     api_caches = relationship("ApiCache", back_populates="facebook_account")
@@ -62,10 +88,14 @@ class ConversationHistory(Base):
     user_prompt = Column(Text, comment="User message/prompt")
     full_prompt_sent = Column(Text, comment="Complete prompt sent to LLM")
     llm_response = Column(Text, comment="LLM response")
-    model_params = Column(JSON, comment="Model parameters (temperature, etc.)")
+    llm_params = Column(JSON, comment="LLM model parameters (temperature, etc.)")
     tokens_used = Column(Integer, comment="Number of tokens used")
     estimated_cost_usd = Column(Integer, comment="Estimated cost in USD (scaled by 1000000)")
     timestamp = Column(DateTime(timezone=True), server_default=func.now(), comment="Message timestamp")
+    
+    # Foreign key relationship
+    user_id_fk = Column(Integer, nullable=True, comment="Reference to users.id")
+    user = relationship("User", back_populates="conversations")
     
     # Indexes for performance
     __table_args__ = (

@@ -2,11 +2,16 @@
 
 import pandas as pd
 import hashlib
+import traceback
 from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
 from typing import List, Dict, Any, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_
+
+from facebook_business.api import FacebookAdsApi
+from facebook_business.adobjects.adaccount import AdAccount
+from facebook_business.adobjects.campaign import Campaign
 
 from langchain.tools import BaseTool
 from langchain.schema import BaseMessage
@@ -14,11 +19,175 @@ from pydantic import BaseModel, Field
 
 from src.database import get_db
 from src.models import FacebookAccount, ApiCache
-from src.facebook_api import get_campaign_data_for_period
-from config import CACHE_EXPIRATION_HOURS
+from config import CACHE_EXPIRATION_HOURS, FB_APP_ID, FB_APP_SECRET, FB_ACCESS_TOKEN, ACTION_MAP
 from src.logging_config import get_logger
 
 logger = get_logger(__name__)
+
+# === Facebook API Helper Functions ===
+
+def initialize_facebook_api():
+    """Establishes connection with Facebook API."""
+    try:
+        FacebookAdsApi.init(FB_APP_ID, FB_APP_SECRET, FB_ACCESS_TOKEN)
+        logger.info("✅ Facebook API connection successful.")
+    except Exception as e:
+        logger.error(f"❌ Error initializing Facebook API: {e}")
+        raise
+
+def _parse_results(campaign, campaign_insights):
+    """
+    Private helper function to determine the main result of a campaign,
+    based on keywords in the campaign name.
+    """
+    if not campaign_insights or not campaign_insights[0].get('actions'):
+        return 0, 'N/A', 'N/A', 0.0
+
+    insight_data = campaign_insights[0]
+    actions = insight_data.get('actions', [])
+    cost_per_action = insight_data.get('cost_per_action_type', [])
+    campaign_name = campaign.get('name', '').lower()
+
+    target_indicator = ''
+    if 'conversion' in campaign_name:
+        target_indicator = 'conversions:submit_application_website'
+    elif 'lead form' in campaign_name:
+        target_indicator = 'actions:onsite_conversion.lead_grouped'
+    elif 'tráfico' in campaign_name or 'trafico' in campaign_name:
+        target_indicator = 'actions:link_click'
+    else:
+        target_indicator = 'conversions:submit_application_website'
+
+    if target_indicator:
+        possible_api_names = ACTION_MAP.get(target_indicator, [])
+        for api_name in possible_api_names:
+            action_obj = next((a for a in actions if a['action_type'] == api_name), None)
+            if action_obj:
+                result_count = int(action_obj['value'])
+                cost_obj = next((c for c in cost_per_action if c['action_type'] == api_name), None)
+                cost_per_result = float(cost_obj['value']) if cost_obj else 0.0
+                return result_count, target_indicator, api_name, cost_per_result
+
+    logger.warning(f"🟡 WARNING: No main action found for '{campaign.get('name')}'. Using fallback.")
+    if cost_per_action:
+        sorted_costs = sorted(cost_per_action, key=lambda x: float(x.get('value', 0)), reverse=True)
+        fallback_action = sorted_costs[0]
+        fallback_type = fallback_action['action_type']
+        fallback_cost = float(fallback_action['value'])
+        fallback_count_obj = next((ac for ac in actions if ac['action_type'] == fallback_type), None)
+        fallback_count = int(fallback_count_obj['value']) if fallback_count_obj else 0
+        return fallback_count, f"fallback:{fallback_type}", fallback_type, fallback_cost
+
+    return 0, 'N/A', 'N/A', 0.0
+
+def get_campaign_data_for_period(ad_account_id, start_date, end_date):
+    """
+    Gets and filters "Lead Form" campaign data for a specific period.
+    """
+    logger.info(f"🔄 Getting data for period: {start_date} to {end_date}...")
+    try:
+        # Initialize Facebook API
+        initialize_facebook_api()
+        
+        ad_account = AdAccount(ad_account_id)
+        
+        campaign_fields = [
+            'id', 'account_id', 'name', 'objective', 'status', 'effective_status',
+            'buying_type', 'start_time', 'stop_time', 'created_time', 'daily_budget',
+            'lifetime_budget', 'budget_remaining', 'special_ad_categories',
+        ]
+
+        insights_fields = [
+            'spend', 'impressions', 'reach', 'frequency', 'actions', 
+            'cost_per_action_type', 'action_values', 'cpm', 'inline_link_clicks', 
+            'cost_per_inline_link_click', 'inline_link_click_ctr', 'clicks', 'cpc', 'ctr',
+        ]
+
+        params_to_get = {
+            'time_range': {'since': str(start_date), 'until': str(end_date)},
+            'level': 'campaign',
+        }
+        
+        campaigns = ad_account.get_campaigns(fields=campaign_fields)
+        extracted_data = []
+
+        for campaign in campaigns:
+            campaign_name = campaign.get('name', '').lower()
+
+            if 'lead form' not in campaign_name:
+                if 'trafico' in campaign_name or 'tráfico' in campaign_name:
+                    logger.info(f"🟡 Skipping Traffic campaign: {campaign.get('name')}")
+                elif 'conversion' in campaign_name:
+                    logger.info(f"🟡 Skipping Conversion campaign (pending analysis): {campaign.get('name')}")
+                else:
+                    logger.info(f"🟡 Skipping campaign (not Lead Form): {campaign.get('name')}")
+                continue
+
+            logger.info(f"🟢 Processing Lead Form campaign: {campaign.get('name')}")
+            insights = campaign.get_insights(fields=insights_fields, params=params_to_get)
+            
+            if insights:
+                resultados_num, indicador_res, indicador_real, costo_por_resultado = _parse_results(campaign, insights)
+                
+                budget_type = "Daily" if campaign.get('daily_budget') else "Total"
+                budget_value = campaign.get('daily_budget') or campaign.get('lifetime_budget', 0)
+                actions_list = insights[0].get('actions', [])
+                shop_clicks_action = next((a for a in actions_list if a['action_type'] == 'shop_clicks'), None)
+                shop_clicks_value = int(shop_clicks_action['value']) if shop_clicks_action else 0
+
+                campaign_info = {
+                    'Campaign ID': campaign.get('id'),
+                    'Report Start': start_date.strftime('%Y-%m-%d'),
+                    'Report End': end_date.strftime('%Y-%m-%d'),
+                    'Campaign Name': campaign.get('name'),
+                    'Objective': campaign.get('objective'),
+                    'Campaign Delivery': campaign.get('effective_status'),
+                    'Results': resultados_num,
+                    'Result Indicator': indicador_res,
+                    'Result Indicator _REAL': indicador_real,
+                    'Reach': int(insights[0].get('reach', 0)),
+                    'Frequency': float(insights[0].get('frequency', 0)),
+                    'Cost per Results (CLP)': costo_por_resultado,
+                    'Ad Set Budget': int(budget_value) / 100,
+                    'Ad Set Budget Type': budget_type,
+                    'Amount Spent (CLP)': float(insights[0].get('spend', 0)),
+                    'End Date': campaign.get('stop_time', 'Active'),
+                    'Impressions': int(insights[0].get('impressions', 0)),
+                    'CPM (cost per thousand impressions) (CLP)': float(insights[0].get('cpm', 0)),
+                    'Link Clicks': int(insights[0].get('inline_link_clicks', 0)),
+                    'shop_clicks': shop_clicks_value,
+                    'CPC (cost per link click) (CLP)': float(insights[0].get('cost_per_inline_link_click', 0)),
+                    'CTR (link click-through rate)': float(insights[0].get('inline_link_click_ctr', 0)),
+                    'Clicks (all)': int(insights[0].get('clicks', 0)),
+                    'CTR (all)': float(insights[0].get('ctr', 0)),
+                    'CPC (all) (CLP)': float(insights[0].get('cpc', 0)),
+                }
+                extracted_data.append(campaign_info)
+        
+        if not extracted_data:
+            logger.info(f"🟡 No 'Lead Form' campaign data found for the period.")
+            return pd.DataFrame()
+
+        df = pd.DataFrame(extracted_data)
+        
+        final_column_order = [
+            'Campaign ID', 'Report Start', 'Report End', 'Campaign Name', 'Objective', 'Campaign Delivery',
+            'Results', 'Result Indicator', 'Result Indicator _REAL', 'Reach', 'Frequency',
+            'Cost per Results (CLP)', 'Ad Set Budget', 'Ad Set Budget Type',
+            'Amount Spent (CLP)', 'End Date', 'Impressions', 'CPM (cost per thousand impressions) (CLP)',
+            'Link Clicks', 'shop_clicks', 'CPC (cost per link click) (CLP)',
+            'CTR (link click-through rate)', 'Clicks (all)', 'CTR (all)', 'CPC (all) (CLP)'
+        ]
+        
+        df = df.reindex(columns=final_column_order)
+
+        logger.info(f"✅ Lead Form data obtained and processed for {len(extracted_data)} campaigns.")
+        return df
+
+    except Exception as e:
+        logger.error(f"❌ Error getting campaign data: {e}")
+        logger.error(traceback.format_exc())
+        return pd.DataFrame()
 
 # === Input Schemas for Tools ===
 
@@ -310,14 +479,14 @@ class FacebookAdsAnalysisTool(BaseTool):
             if not df_last_month.empty:
                 response += f"Last Month ({last_month_start} to {last_month_end}):\n"
                 response += f"- {len(df_last_month)} campaigns found\n"
-                response += f"- Total spend: ${df_last_month['Importe gastado (CLP)'].sum():.2f} CLP\n"
-                response += f"- Total results: {df_last_month['Resultados'].sum()}\n\n"
+                response += f"- Total spend: ${df_last_month['Amount Spent (CLP)'].sum():.2f} CLP\n"
+                response += f"- Total results: {df_last_month['Results'].sum()}\n\n"
             
             if not df_prev_month.empty:
                 response += f"Previous Month ({prev_month_start} to {prev_month_end}):\n"
                 response += f"- {len(df_prev_month)} campaigns found\n"
-                response += f"- Total spend: ${df_prev_month['Importe gastado (CLP)'].sum():.2f} CLP\n"
-                response += f"- Total results: {df_prev_month['Resultados'].sum()}\n\n"
+                response += f"- Total spend: ${df_prev_month['Amount Spent (CLP)'].sum():.2f} CLP\n"
+                response += f"- Total results: {df_prev_month['Results'].sum()}\n\n"
             
             response += "Data is ready for detailed analysis. The agent can now provide insights and recommendations."
             

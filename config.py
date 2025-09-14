@@ -12,6 +12,23 @@ FB_APP_SECRET = os.getenv('FACEBOOK_APP_SECRET')
 FB_ACCESS_TOKEN = os.getenv('FACEBOOK_ACCESS_TOKEN')
 FB_AD_ACCOUNT_ID = os.getenv('FACEBOOK_AD_ACCOUNT_ID')
 
+# --- Facebook API Action Mapping ---
+ACTION_MAP = {
+    'conversions:submit_application_website': [
+        'onsite_conversion.lead_grouped',
+        'submit_application_website',
+        'lead'
+    ],
+    'actions:onsite_conversion.lead_grouped': [
+        'onsite_conversion.lead_grouped',
+        'lead'
+    ],
+    'actions:link_click': [
+        'link_click',
+        'click'
+    ]
+}
+
 # --- Credenciales de Azure OpenAI ---
 AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
 AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
@@ -22,15 +39,15 @@ AZURE_API_VERSION = "2024-02-01"
 DATABASE_CONNECTION_STRING = os.getenv('DATABASE_CONNECTION_STRING')
 
 
-# --- Configuración de la Aplicación ---
+# --- Application Configuration ---
 DEBUG = os.getenv('DEBUG', 'False').lower() == 'true'
-# --- Configuración de Logging ---
+# --- Logging Configuration ---
 LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')
 LOG_FILE = os.getenv('LOG_FILE', 'logs/app.log')
 LOG_FORMAT = os.getenv('LOG_FORMAT', '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
 
-# --- Configuración de LangChain y Agente ---
+# --- LangChain and Agent Configuration ---
 # Memory configuration
 MEMORY_TEMPERATURE = float(os.getenv('MEMORY_TEMPERATURE', '0.1'))
 MEMORY_MAX_TOKEN_LIMIT = int(os.getenv('MEMORY_MAX_TOKEN_LIMIT', '2000'))
@@ -40,6 +57,6 @@ AGENT_MAX_TOKENS = int(os.getenv('AGENT_MAX_TOKENS', '2000'))
 AGENT_MAX_ITERATIONS = int(os.getenv('AGENT_MAX_ITERATIONS', '5'))
 # Cache configuration
 CACHE_EXPIRATION_HOURS = int(os.getenv('CACHE_EXPIRATION_HOURS', '1'))
-# --- Configuración de Prompts ---
+# --- Prompts Configuration ---
 SYSTEM_PROMPT_SOURCE = os.getenv('SYSTEM_PROMPT_SOURCE', 'database')  # 'default' or 'database'
 DEFAULT_PROMPT_FILE = os.getenv('DEFAULT_PROMPT_FILE', 'src/prompts/default_system_prompt.txt')

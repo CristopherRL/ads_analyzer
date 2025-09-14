@@ -71,13 +71,25 @@ python -m venv venv
 # Windows:
 venv\Scripts\activate
 # macOS/Linux:
-source venv/bin/activate
+source venv/bin/activate 
+or  
+source venv/Scripts/activate
 
 # Install dependencies
 pip install -r requirements.txt
 ```
 
-### 2. Environment Configuration
+### 2. Database Setup
+
+```bash
+# Create users table
+psql -h <your-host> -U <your-user> -d <your-database> -f docs/internal/queries/create_users_table.sql
+
+# Or run the migration script if you have existing tables
+psql -h <your-host> -U <your-user> -d <your-database> -f docs/internal/queries/migration_to_match_schema.sql
+```
+
+### 3. Environment Configuration
 
 Create a `.env` file in the project root:
 
@@ -194,6 +206,24 @@ curl -X POST "http://127.0.0.1:8000/chat" \
     "message": "Quiero analizar la cuenta act_123456789",
     "session_id": "20241201_143022_cristopher_at_example_com"
   }'
+```
+
+### Authentication
+
+#### Login (Simple Email Verification)
+
+```bash
+curl -X POST "http://127.0.0.1:8000/auth/login" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "cristopher@example.com"
+  }'
+```
+
+#### Verify User
+
+```bash
+curl "http://127.0.0.1:8000/auth/verify/cristopher@example.com"
 ```
 
 ### Session Management

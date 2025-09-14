@@ -149,8 +149,8 @@ class DigitalMarketingAgent:
         Returns:
             Basic fallback prompt
         """
-        return """Eres un experto en Marketing Digital y análisis de datos de campañas de Facebook Ads. 
-        Ayuda al usuario a analizar el rendimiento de sus campañas publicitarias y proporciona insights valiosos."""
+        return """You are a Digital Marketing expert and Facebook Ads campaign data analyst. 
+        Help the user analyze the performance of their advertising campaigns and provide valuable insights."""
     
     def _create_agent(self):
         """
