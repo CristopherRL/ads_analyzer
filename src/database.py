@@ -1,6 +1,6 @@
 # === File: src/database.py ===
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from config import DATABASE_CONNECTION_STRING
@@ -77,7 +77,7 @@ def test_connection():
     """
     try:
         db = SessionLocal()
-        db.execute("SELECT 1")
+        db.execute(text("SELECT 1"))
         db.close()
         logger.info("Database connection test successful")
         return True

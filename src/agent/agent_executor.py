@@ -3,8 +3,7 @@
 from typing import List, Dict, Any, Optional
 from langchain.agents import AgentExecutor, create_openai_tools_agent
 from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_openai import ChatOpenAI
-from langchain.schema import BaseMessage
+from langchain_openai import AzureChatOpenAI
 from sqlalchemy import and_
 
 from src.agent.memory import DatabaseConversationMemory, create_memory
@@ -28,12 +27,12 @@ class DigitalMarketingAgent:
     Provides conversational interface for Facebook Ads analysis.
     """
     
-    def __init__(self, user_id: str, session_id: Optional[str] = None):
+    def __init__(self, user_id: int, session_id: Optional[str] = None):
         """
         Initialize the Digital Marketing Agent.
         
         Args:
-            user_id: User identifier (e.g., email)
+            user_id: User ID (foreign key to users table)
             session_id: Optional session identifier for conversation continuity
         """
         self.user_id = user_id
@@ -48,21 +47,22 @@ class DigitalMarketingAgent:
         
         logger.info(f"Initialized Digital Marketing Agent for user {user_id}")
     
-    def _create_llm(self) -> ChatOpenAI:
+    def _create_llm(self) -> AzureChatOpenAI:
         """
         Create and configure the Azure OpenAI LLM.
         
         Returns:
-            Configured ChatOpenAI instance
+            Configured AzureChatOpenAI instance
+        
         """
-        return ChatOpenAI(
-            azure_endpoint=AZURE_OPENAI_ENDPOINT,
+        return AzureChatOpenAI(
+            azure_deployment=AZURE_OPENAI_DEPLOYMENT_NAME,  # Use deployment name
             api_key=AZURE_OPENAI_API_KEY,
+            azure_endpoint=AZURE_OPENAI_ENDPOINT,
             api_version=AZURE_API_VERSION,
-            azure_deployment=AZURE_OPENAI_DEPLOYMENT_NAME,
             temperature=AGENT_TEMPERATURE,  # Configurable temperature for balanced creativity
-            model_name=AZURE_OPENAI_DEPLOYMENT_NAME,
-            max_tokens=AGENT_MAX_TOKENS
+            max_tokens=AGENT_MAX_TOKENS,
+            model=AZURE_OPENAI_DEPLOYMENT_NAME  # Required for token counting
         )
     
     def _get_tools(self) -> List:
@@ -99,7 +99,14 @@ class DigitalMarketingAgent:
         try:
             with open(DEFAULT_PROMPT_FILE, 'r', encoding='utf-8') as f:
                 prompt = f.read().strip()
+            
+            # Validate prompt content
+            if not prompt or len(prompt.strip()) == 0:
+                logger.error("Prompt file is empty")
+                return self._get_fallback_prompt()
+            
             logger.info(f"Loaded system prompt from file: {DEFAULT_PROMPT_FILE}")
+            logger.info(f"Prompt length: {len(prompt)} characters")
             return prompt
         except Exception as e:
             logger.error(f"Error loading prompt from file: {e}")
@@ -159,25 +166,37 @@ class DigitalMarketingAgent:
         Returns:
             Configured LangChain agent
         """
-        # Get system prompt from configured source
-        system_prompt = self._get_system_prompt()
-        
-        # Create prompt template
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", system_prompt),
-            MessagesPlaceholder(variable_name="chat_history"),
-            ("human", "{input}"),
-            MessagesPlaceholder(variable_name="agent_scratchpad")
-        ])
-        
-        # Create agent
-        agent = create_openai_tools_agent(
-            llm=self.llm,
-            tools=self.tools,
-            prompt=prompt
-        )
-        
-        return agent
+        try:
+            # Get system prompt from configured source
+            logger.info("Getting system prompt...")
+            system_prompt = self._get_system_prompt()
+            logger.info(f"System prompt loaded, length: {len(system_prompt)}")
+            
+            # Create prompt template
+            logger.info("Creating prompt template...")
+            prompt = ChatPromptTemplate.from_messages([
+                ("system", system_prompt),
+                MessagesPlaceholder(variable_name="chat_history"),
+                ("human", "{input}"),
+                MessagesPlaceholder(variable_name="agent_scratchpad")
+            ])
+            logger.info("Prompt template created successfully")
+            
+            # Create agent
+            logger.info("Creating OpenAI tools agent...")
+            agent = create_openai_tools_agent(
+                llm=self.llm,
+                tools=self.tools,
+                prompt=prompt
+            )
+            logger.info("Agent created successfully")
+            
+            return agent
+        except Exception as e:
+            logger.error(f"Error creating agent: {e}")
+            import traceback
+            logger.error(f"Full traceback: {traceback.format_exc()}")
+            raise
     
     def _create_agent_executor(self) -> AgentExecutor:
         """
@@ -189,7 +208,6 @@ class DigitalMarketingAgent:
         return AgentExecutor(
             agent=self.agent,
             tools=self.tools,
-            memory=self.memory,
             verbose=True,  # Enable detailed logging
             handle_parsing_errors=True,  # Handle tool parsing errors gracefully
             max_iterations=AGENT_MAX_ITERATIONS,  # Configurable limit to prevent infinite loops
@@ -207,21 +225,42 @@ class DigitalMarketingAgent:
             Agent's response
         """
         try:
+            # Validate input message
+            if not message or not isinstance(message, str):
+                logger.error(f"Invalid message received: {message}")
+                return "Lo siento, el mensaje no es válido."
+            
             logger.info(f"Processing message for user {self.user_id}: {message[:100]}...")
             
-            # Execute agent with user input
+            # Get chat history from memory
+            chat_history = self.memory.chat_memory.messages
+            logger.info(f"Chat history length: {len(chat_history)}")
+            
+            # Execute agent with user input and chat history
+            logger.info("Invoking agent executor...")
             response = self.agent_executor.invoke({
-                "input": message
+                "input": message,
+                "chat_history": chat_history
             })
+            logger.info(f"Agent response received: {type(response)}")
             
             # Extract response text
             response_text = response.get("output", "Lo siento, no pude procesar tu solicitud.")
+            logger.info(f"Response text extracted: {response_text[:100]}...")
+            
+            # Save conversation to memory
+            self.memory.save_context(
+                {"input": message},
+                {"output": response_text}
+            )
             
             logger.info(f"Generated response for user {self.user_id}")
             return response_text
             
         except Exception as e:
             logger.error(f"Error processing message: {e}")
+            import traceback
+            logger.error(f"Full traceback: {traceback.format_exc()}")
             return f"Lo siento, ocurrió un error al procesar tu solicitud: {str(e)}"
     
     def get_session_info(self) -> Dict[str, Any]:
@@ -251,18 +290,18 @@ class DigitalMarketingAgent:
 
 # === Utility Functions ===
 
-def generate_session_id(user_id: str) -> str:
+def generate_session_id(user_id: int) -> str:
     """
     Generate a readable session ID using timestamp and user_id.
     
     Args:
-        user_id: User identifier (email)
+        user_id: User ID (foreign key to users table)
     
     Returns:
         Formatted session ID: timestamp_userid
     """
     from datetime import datetime
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    # Clean user_id for filename compatibility
-    clean_user_id = user_id.replace("@", "_at_").replace(".", "_")
+    # Clean user_id for filename compatibility (convert to string first)
+    clean_user_id = str(user_id).replace("@", "_at_").replace(".", "_")
     return f"{timestamp}_{clean_user_id}"

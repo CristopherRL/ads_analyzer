@@ -35,8 +35,7 @@ ENV/
 .vscode/
 .idea/
 .cursor/
-.cursor/rules/
-.cursor/rules/master-prompt.mdc
+.cursorignore
 *.swp
 *.swo
 

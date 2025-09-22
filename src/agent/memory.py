@@ -8,13 +8,14 @@ from sqlalchemy import and_
 
 from langchain.memory import ConversationSummaryBufferMemory
 from langchain.schema import BaseMessage, HumanMessage, AIMessage
-from langchain_openai import ChatOpenAI
+from langchain_openai import AzureChatOpenAI
+
 
 from src.database import get_db
 from src.models import ConversationHistory
 from config import (
     AZURE_OPENAI_ENDPOINT, 
-    AZURE_OPENAI_API_KEY, 
+    AZURE_OPENAI_API_KEY,
     AZURE_OPENAI_DEPLOYMENT_NAME, 
     AZURE_API_VERSION,
     MEMORY_TEMPERATURE, 
@@ -24,36 +25,37 @@ from src.logging_config import get_logger
 
 logger = get_logger(__name__)
 
-class DatabaseConversationMemory(ConversationSummaryBufferMemory):
+class DatabaseConversationMemory:
     """
-    Custom memory class that extends ConversationSummaryBufferMemory
-    to persist conversation history in PostgreSQL database.
+    Custom memory class that uses ConversationSummaryBufferMemory internally
+    and persists conversation history in PostgreSQL database.
     """
     
-    def __init__(self, user_id: str, session_id: Optional[str] = None, **kwargs):
+    def __init__(self, user_id: int, session_id: Optional[str] = None, **kwargs):
         """
         Initialize database-backed conversation memory.
         
         Args:
-            user_id: User identifier (e.g., email)
+            user_id: User ID (foreign key to users table)
             session_id: Optional session identifier for conversation continuity
             **kwargs: Additional arguments for ConversationSummaryBufferMemory
         """
+        # Store user_id and session_id as instance attributes
         self.user_id = user_id
         self.session_id = session_id or str(uuid.uuid4())
         
         # Initialize Azure OpenAI LLM for summarization
-        llm = ChatOpenAI(
-            azure_endpoint=AZURE_OPENAI_ENDPOINT, 
+        llm = AzureChatOpenAI(
+            azure_deployment=AZURE_OPENAI_DEPLOYMENT_NAME,  # Use deployment name
             api_key=AZURE_OPENAI_API_KEY,
+            azure_endpoint=AZURE_OPENAI_ENDPOINT,
             api_version=AZURE_API_VERSION,
-            azure_deployment=AZURE_OPENAI_DEPLOYMENT_NAME,
             temperature=MEMORY_TEMPERATURE,  # Configurable temperature for consistent summarization
-            model_name=AZURE_OPENAI_DEPLOYMENT_NAME #TODO: Evaluate if we can use another LLM for summarization
+            model=AZURE_OPENAI_DEPLOYMENT_NAME  # Required for token counting
         )
         
-        # Initialize parent class with LLM for summarization
-        super().__init__(
+        # Initialize internal memory using composition instead of inheritance
+        self._memory = ConversationSummaryBufferMemory(
             llm=llm,
             max_token_limit=MEMORY_MAX_TOKEN_LIMIT,  # Configurable token limit for summarization
             return_messages=True,
@@ -91,7 +93,7 @@ class DatabaseConversationMemory(ConversationSummaryBufferMemory):
             
             # Load messages into memory
             if messages:
-                self.chat_memory.messages = messages
+                self._memory.chat_memory.messages = messages
                 logger.info(f"Loaded {len(conversations)} conversation pairs from database")
             else:
                 logger.info("No previous conversation history found")
@@ -136,26 +138,6 @@ class DatabaseConversationMemory(ConversationSummaryBufferMemory):
             if 'db' in locals():
                 db.close()
     
-    def save_context(self, inputs: Dict[str, Any], outputs: Dict[str, str]) -> None:
-        """
-        Save conversation context to database.
-        Override parent method to add database persistence.
-        
-        Args:
-            inputs: Input dictionary containing user message
-            outputs: Output dictionary containing AI response
-        """
-        # Call parent method to update in-memory state
-        super().save_context(inputs, outputs)
-        
-        # Extract messages for database storage
-        human_message = inputs.get("input", "")
-        ai_message = outputs.get("output", "")
-        
-        # Save to database
-        if human_message and ai_message:
-            self._save_conversation_pair(human_message, ai_message)
-    
     def get_session_info(self) -> Dict[str, Any]:
         """
         Get information about the current session.
@@ -166,8 +148,8 @@ class DatabaseConversationMemory(ConversationSummaryBufferMemory):
         return {
             "user_id": self.user_id,
             "session_id": self.session_id,
-            "message_count": len(self.chat_memory.messages),
-            "has_summary": bool(self.moving_summary_buffer)
+            "message_count": len(self._memory.chat_memory.messages),
+            "has_summary": bool(self._memory.moving_summary_buffer)
         }
     
     def clear_session(self) -> None:
@@ -176,7 +158,7 @@ class DatabaseConversationMemory(ConversationSummaryBufferMemory):
         """
         try:
             # Clear in-memory state
-            super().clear()
+            self._memory.clear()
             
             # Clear database records for this session
             db_gen = get_db()
@@ -208,8 +190,8 @@ class DatabaseConversationMemory(ConversationSummaryBufferMemory):
         Returns:
             Conversation summary string
         """
-        if self.moving_summary_buffer:
-            return self.moving_summary_buffer
+        if self._memory.moving_summary_buffer:
+            return self._memory.moving_summary_buffer
         else:
             return "No conversation summary available yet."
     
@@ -223,16 +205,49 @@ class DatabaseConversationMemory(ConversationSummaryBufferMemory):
         Returns:
             List of recent BaseMessage objects
         """
-        return self.chat_memory.messages[-count:] if self.chat_memory.messages else []
+        return self._memory.chat_memory.messages[-count:] if self._memory.chat_memory.messages else []
+    
+    # === LangChain Memory Interface Methods ===
+    
+    @property
+    def chat_memory(self):
+        """Delegate to internal memory's chat_memory."""
+        return self._memory.chat_memory
+    
+    @property
+    def moving_summary_buffer(self):
+        """Delegate to internal memory's moving_summary_buffer."""
+        return self._memory.moving_summary_buffer
+    
+    def clear(self):
+        """Clear the memory."""
+        self._memory.clear()
+    
+    def load_memory_variables(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
+        """Load memory variables."""
+        return self._memory.load_memory_variables(inputs)
+    
+    def save_context(self, inputs: Dict[str, Any], outputs: Dict[str, str]) -> None:
+        """Save context to both internal memory and database."""
+        # Call internal memory method to update in-memory state
+        self._memory.save_context(inputs, outputs)
+        
+        # Extract messages for database storage
+        human_message = inputs.get("input", "")
+        ai_message = outputs.get("output", "")
+        
+        # Save to database
+        if human_message and ai_message:
+            self._save_conversation_pair(human_message, ai_message)
 
 # === Memory Factory Function ===
 
-def create_memory(user_id: str, session_id: Optional[str] = None) -> DatabaseConversationMemory:
+def create_memory(user_id: int, session_id: Optional[str] = None) -> DatabaseConversationMemory:
     """
     Factory function to create a new database-backed conversation memory.
     
     Args:
-        user_id: User identifier
+        user_id: User ID (foreign key to users table)
         session_id: Optional session identifier
     
     Returns:

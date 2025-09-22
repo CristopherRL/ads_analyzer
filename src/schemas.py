@@ -56,7 +56,7 @@ class LoginResponse(BaseModel):
 
 class FacebookAccountBase(BaseModel):
     """Base schema for Facebook account data."""
-    user_id: str = Field(..., description="User identifier (e.g., email)")
+    user_id: int = Field(..., description="User ID (foreign key to users table)")
     ad_account_id: str = Field(..., description="Facebook Ad Account ID (e.g., act_123456)")
     account_name: Optional[str] = Field(None, description="Human-readable account name")
     key_vault_secret_name: str = Field(..., description="Azure Key Vault secret name for access token")
@@ -135,7 +135,7 @@ class ConversationHistoryResponse(BaseModel):
 
 class ChatRequest(BaseModel):
     """Schema for chat endpoint request."""
-    user_id: str = Field(..., description="User identifier")
+    user_id: int = Field(..., description="User ID (foreign key to users table)")
     message: str = Field(..., description="User message")
     session_id: Optional[str] = Field(None, description="Optional session identifier for conversation continuity")
 
@@ -144,11 +144,11 @@ class ChatResponse(BaseModel):
     response: str = Field(..., description="AI agent response")
     session_id: str = Field(..., description="Session identifier")
     timestamp: datetime = Field(default_factory=datetime.now, description="Response timestamp")
-    user_id: str = Field(..., description="User identifier")
+    user_id: int = Field(..., description="User ID (foreign key to users table)")
 
 class SessionInfoResponse(BaseModel):
     """Schema for session information response."""
-    user_id: str = Field(..., description="User identifier")
+    user_id: int = Field(..., description="User ID (foreign key to users table)")
     session_id: str = Field(..., description="Session identifier")
     message_count: int = Field(..., description="Number of messages in session")
     has_summary: bool = Field(..., description="Whether session has conversation summary")

@@ -1,6 +1,6 @@
 # === File: src/models.py ===
 
-from sqlalchemy import Column, Integer, String, DateTime, Text, JSON, Boolean, Index
+from sqlalchemy import Column, Integer, String, DateTime, Text, JSON, Boolean, Index, ForeignKey
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from src.database import Base
@@ -35,17 +35,14 @@ class FacebookAccount(Base):
     __tablename__ = "facebook_accounts"
     
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(String(255), nullable=False, index=True, comment="User identifier (e.g., email)")
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True, comment="Foreign key to users table")
     ad_account_id = Column(String(255), nullable=False, unique=True, comment="Facebook Ad Account ID (e.g., act_123456)")
     account_name = Column(String(255), comment="Human-readable account name")
     key_vault_secret_name = Column(String(255), nullable=False, unique=True, comment="Azure Key Vault secret name for access token")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), comment="Account creation timestamp")
     
-    # Foreign key relationship
-    user_id_fk = Column(Integer, nullable=True, comment="Reference to users.id")
-    user = relationship("User", back_populates="facebook_accounts")
-    
     # Relationships
+    user = relationship("User", back_populates="facebook_accounts")
     api_caches = relationship("ApiCache", back_populates="facebook_account")
     campaign_data = relationship("CampaignPerformanceData", back_populates="facebook_account")
     
@@ -66,6 +63,10 @@ class ApiCache(Base):
     result_json = Column(JSON, comment="Complete API result in JSONB format")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), comment="Cache creation timestamp")
     
+    # Foreign key relationship
+    facebook_account_id = Column(Integer, ForeignKey("facebook_accounts.id"), nullable=True, comment="Reference to facebook_accounts.id")
+    facebook_account = relationship("FacebookAccount", back_populates="api_caches")
+    
     # Indexes for performance
     __table_args__ = (
         Index('idx_api_cache_account_period', 'ad_account_id', 'date_period'),
@@ -84,7 +85,7 @@ class ConversationHistory(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     session_id = Column(String(255), nullable=False, index=True, comment="Conversation session identifier")
-    user_id = Column(String(255), nullable=False, index=True, comment="User identifier")
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True, comment="Foreign key to users table")
     user_prompt = Column(Text, comment="User message/prompt")
     full_prompt_sent = Column(Text, comment="Complete prompt sent to LLM")
     llm_response = Column(Text, comment="LLM response")
@@ -93,8 +94,7 @@ class ConversationHistory(Base):
     estimated_cost_usd = Column(Integer, comment="Estimated cost in USD (scaled by 1000000)")
     timestamp = Column(DateTime(timezone=True), server_default=func.now(), comment="Message timestamp")
     
-    # Foreign key relationship
-    user_id_fk = Column(Integer, nullable=True, comment="Reference to users.id")
+    # Relationships
     user = relationship("User", back_populates="conversations")
     
     # Indexes for performance
@@ -144,7 +144,7 @@ class CampaignPerformanceData(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), comment="Data creation timestamp")
     
     # Foreign key relationship
-    facebook_account_id = Column(Integer, nullable=True, comment="Reference to facebook_accounts.id")
+    facebook_account_id = Column(Integer, ForeignKey("facebook_accounts.id"), nullable=True, comment="Reference to facebook_accounts.id")
     facebook_account = relationship("FacebookAccount", back_populates="campaign_data")
     
     # Indexes for performance

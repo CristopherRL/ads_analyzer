@@ -12,28 +12,16 @@ FB_APP_SECRET = os.getenv('FACEBOOK_APP_SECRET')
 FB_ACCESS_TOKEN = os.getenv('FACEBOOK_ACCESS_TOKEN')
 FB_AD_ACCOUNT_ID = os.getenv('FACEBOOK_AD_ACCOUNT_ID')
 
-# --- Facebook API Action Mapping ---
-ACTION_MAP = {
-    'conversions:submit_application_website': [
-        'onsite_conversion.lead_grouped',
-        'submit_application_website',
-        'lead'
-    ],
-    'actions:onsite_conversion.lead_grouped': [
-        'onsite_conversion.lead_grouped',
-        'lead'
-    ],
-    'actions:link_click': [
-        'link_click',
-        'click'
-    ]
-}
 
 # --- Credenciales de Azure OpenAI ---
+# Base endpoint (without /openai/deployments/ path)
+AZURE_OPENAI_BASE_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
+# Full endpoint with deployment path (constructed automatically)
 AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
-AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
+AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")  # Keep for backward compatibility
+AZURE_INFERENCE_CREDENTIAL = os.getenv("AZURE_INFERENCE_CREDENTIAL")  # New credential for LangChain
 AZURE_OPENAI_DEPLOYMENT_NAME = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
-AZURE_API_VERSION = "2024-02-01"
+AZURE_API_VERSION = "2024-12-01-preview"
 
 # --- Credenciales de PostgreSQL ---
 DATABASE_CONNECTION_STRING = os.getenv('DATABASE_CONNECTION_STRING')
