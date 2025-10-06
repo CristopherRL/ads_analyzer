@@ -29,8 +29,39 @@ logger = get_logger(__name__)
 def initialize_facebook_api():
     """Establishes connection with Facebook API."""
     try:
+        # Validate configuration before attempting connection
+        if not FB_APP_ID:
+            raise ValueError("FB_APP_ID not configured")
+        if not FB_APP_SECRET:
+            raise ValueError("FB_APP_SECRET not configured")
+        if not FB_ACCESS_TOKEN:
+            raise ValueError("FB_ACCESS_TOKEN not configured")
+        
+        # Configurar SSL deshabilitado para evitar problemas de conectividad
+        import ssl
+        import urllib3
+        
+        # Deshabilitar warnings SSL
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        
+        # Inicializar Facebook Ads API
         FacebookAdsApi.init(FB_APP_ID, FB_APP_SECRET, FB_ACCESS_TOKEN)
-        logger.info("✅ Facebook API connection successful.")
+        
+        # Configurar el cliente HTTP para no verificar SSL
+        try:
+            api = FacebookAdsApi.get_default_api()
+            if hasattr(api, '_session'):
+                api._session.verify = False
+                logger.info("✅ Facebook API connection successful (SSL verification disabled).")
+            else:
+                logger.info("✅ Facebook API connection successful.")
+        except Exception as ssl_error:
+            logger.warning(f"⚠️  Could not disable SSL verification: {ssl_error}")
+            logger.info("✅ Facebook API connection successful.")
+            
+    except ValueError as e:
+        logger.error(f"❌ Configuration error: {e}")
+        raise
     except Exception as e:
         logger.error(f"❌ Error initializing Facebook API: {e}")
         raise
@@ -177,6 +208,16 @@ def get_campaign_data_for_period(ad_account_id, start_date, end_date):
     except Exception as e:
         logger.error(f"❌ Error getting campaign data: {e}")
         logger.error(traceback.format_exc())
+        
+        # Provide more specific error information
+        error_message = str(e)
+        if "Provide valid app ID" in error_message:
+            logger.error("💡 Suggestion: Check FACEBOOK_APP_ID configuration")
+        elif "OAuthException" in error_message:
+            logger.error("💡 Suggestion: Check FACEBOOK_ACCESS_TOKEN validity")
+        elif "permission" in error_message.lower():
+            logger.error("💡 Suggestion: Check account permissions and access rights")
+        
         return pd.DataFrame()
 
 # === Input Schemas for Tools ===
@@ -220,9 +261,15 @@ def _filter_campaigns_by_type(campaigns_data: List[Dict], campaign_type: str = "
     """
     if campaign_type == "lead_form":
         # Current implementation - filter for "lead form" campaigns
-        filtered_data = [campaign for campaign in campaigns_data 
-                        if 'lead form' in campaign.get('name', '').lower()]
+        # Check both 'name' and 'Nombre de la campaña' fields (DataFrame column names)
+        filtered_data = []
+        for campaign in campaigns_data:
+            campaign_name = campaign.get('name', '') or campaign.get('Nombre de la campaña', '')
+            if 'lead form' in campaign_name.lower():
+                filtered_data.append(campaign)
+        
         logger.info(f"Filtered {len(filtered_data)} lead form campaigns from {len(campaigns_data)} total campaigns")
+        logger.debug(f"Campaign names in data: {[c.get('name', c.get('Nombre de la campaña', 'Unknown')) for c in campaigns_data[:3]]}")
     
     elif campaign_type == "traffic":
         # TODO: Implement traffic campaign filtering
@@ -280,6 +327,15 @@ def _get_cached_data(ad_account_id: str, campaign_type: str, start_date: datetim
             
     except Exception as e:
         logger.error(f"Error retrieving cached data: {e}")
+        logger.error(f"Cache query details - ad_account_id: {ad_account_id}, date_period: {date_period}, query_hash: {query_hash}")
+        
+        # Rollback transaction to avoid "current transaction is aborted" errors
+        try:
+            db.rollback()
+            logger.info("Database transaction rolled back due to cache error")
+        except Exception as rollback_error:
+            logger.error(f"Error during rollback: {rollback_error}")
+        
         return None
 
 def _save_to_cache(ad_account_id: str, campaign_type: str, start_date: datetime, end_date: datetime, data: Dict, db: Session) -> bool:

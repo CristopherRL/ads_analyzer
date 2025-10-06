@@ -5,6 +5,7 @@ from langchain.agents import AgentExecutor, create_openai_tools_agent
 from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_openai import AzureChatOpenAI
 from sqlalchemy import and_
+from datetime import datetime, timedelta
 
 from src.agent.memory import DatabaseConversationMemory, create_memory
 from src.tools.facebook_tools import list_available_clients_tool, facebook_ads_analysis_tool
@@ -36,16 +37,98 @@ class DigitalMarketingAgent:
             session_id: Optional session identifier for conversation continuity
         """
         self.user_id = user_id
-        self.session_id = session_id or generate_session_id(user_id)
+        self.user_name = self._get_user_name(user_id)
+        self.session_id = self._get_or_create_session(user_id, session_id)
         
         # Initialize components
         self.llm = self._create_llm()
-        self.memory = create_memory(user_id, self.session_id)
+        self.memory = create_memory(user_id, self.session_id, self.llm)
         self.tools = self._get_tools()
         self.agent = self._create_agent()
         self.agent_executor = self._create_agent_executor()
         
-        logger.info(f"Initialized Digital Marketing Agent for user {user_id}")
+        logger.info(f"Initialized Digital Marketing Agent for user {user_id} ({self.user_name}) with session {self.session_id}")
+    
+    def _get_user_name(self, user_id: int) -> str:
+        """
+        Get user name from database.
+        
+        Args:
+            user_id: User ID to look up
+            
+        Returns:
+            User name or 'Usuario' as fallback
+        """
+        try:
+            from src.database import get_db
+            from src.models import User
+            
+            db_gen = get_db()
+            db = next(db_gen)
+            
+            user = db.query(User).filter(User.id == user_id).first()
+            if user and user.name:
+                return user.name
+            else:
+                return "Usuario"
+                
+        except Exception as e:
+            logger.error(f"Error getting user name: {e}")
+            return "Usuario"
+        finally:
+            if 'db' in locals():
+                db.close()
+    
+    def _get_or_create_session(self, user_id: int, provided_session_id: Optional[str] = None) -> str:
+        """
+        Get existing valid session or create new one.
+        
+        Args:
+            user_id: User ID
+            provided_session_id: Optional session ID to validate
+            
+        Returns:
+            Valid session ID
+        """
+        if provided_session_id and self._is_session_valid(provided_session_id):
+            logger.info(f"Using existing valid session: {provided_session_id}")
+            return provided_session_id
+        else:
+            new_session_id = generate_session_id(user_id)
+            logger.info(f"Created new session: {new_session_id}")
+            return new_session_id
+    
+    def _is_session_valid(self, session_id: str, timeout_minutes: int = 30) -> bool:
+        """
+        Check if session ID is still valid (not expired).
+        
+        Args:
+            session_id: Session ID to validate
+            timeout_minutes: Session timeout in minutes
+            
+        Returns:
+            True if session is valid, False if expired
+        """
+        try:
+            # Extract timestamp from session_id (format: YYYYMMDD_HHMMSS_userid)
+            parts = session_id.split('_')
+            if len(parts) >= 3:
+                date_part = parts[0]  # YYYYMMDD
+                time_part = parts[1]  # HHMMSS
+                
+                # Parse timestamp
+                session_timestamp = datetime.strptime(f"{date_part}_{time_part}", "%Y%m%d_%H%M%S")
+                
+                # Check if session is still valid
+                timeout = timedelta(minutes=timeout_minutes)
+                return datetime.now() - session_timestamp < timeout
+            else:
+                # Invalid format, consider expired
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error validating session {session_id}: {e}")
+            return False
     
     def _create_llm(self) -> AzureChatOpenAI:
         """
@@ -82,12 +165,32 @@ class DigitalMarketingAgent:
         Get system prompt from configured source (file or database).
         
         Returns:
-            System prompt string
+            System prompt string with user personalization
         """
         if SYSTEM_PROMPT_SOURCE == 'database':
-            return self._load_prompt_from_database()
+            base_prompt = self._load_prompt_from_database()
         else:
-            return self._load_prompt_from_file()
+            base_prompt = self._load_prompt_from_file()
+        
+        # Personalize prompt with user name
+        personalized_prompt = self._personalize_prompt(base_prompt)
+        return personalized_prompt
+    
+    def _personalize_prompt(self, base_prompt: str) -> str:
+        """
+        Personalize system prompt with user information.
+        
+        Args:
+            base_prompt: Base system prompt
+            
+        Returns:
+            Personalized prompt with user name
+        """
+        # Add user personalization at the beginning
+        personalization = f"El usuario con el que estás hablando se llama {self.user_name}. "
+        
+        # Combine personalization with base prompt
+        return base_prompt + personalization
     
     def _load_prompt_from_file(self) -> str:
         """
@@ -228,7 +331,7 @@ class DigitalMarketingAgent:
             # Validate input message
             if not message or not isinstance(message, str):
                 logger.error(f"Invalid message received: {message}")
-                return "Lo siento, el mensaje no es válido."
+                return "Sorry, this message is not valid."
             
             logger.info(f"Processing message for user {self.user_id}: {message[:100]}...")
             
@@ -245,7 +348,7 @@ class DigitalMarketingAgent:
             logger.info(f"Agent response received: {type(response)}")
             
             # Extract response text
-            response_text = response.get("output", "Lo siento, no pude procesar tu solicitud.")
+            response_text = response.get("output", "Sorry, I couldn't process your request.")
             logger.info(f"Response text extracted: {response_text[:100]}...")
             
             # Save conversation to memory
@@ -261,7 +364,7 @@ class DigitalMarketingAgent:
             logger.error(f"Error processing message: {e}")
             import traceback
             logger.error(f"Full traceback: {traceback.format_exc()}")
-            return f"Lo siento, ocurrió un error al procesar tu solicitud: {str(e)}"
+            return f"Sorry, an error occurred while processing your request: {str(e)}"
     
     def get_session_info(self) -> Dict[str, Any]:
         """

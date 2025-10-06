@@ -7,10 +7,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # --- Credenciales de Facebook ---
-FB_APP_ID = os.getenv('FACEBOOK_APP_ID')
-FB_APP_SECRET = os.getenv('FACEBOOK_APP_SECRET')
-FB_ACCESS_TOKEN = os.getenv('FACEBOOK_ACCESS_TOKEN')
-FB_AD_ACCOUNT_ID = os.getenv('FACEBOOK_AD_ACCOUNT_ID')
+FB_APP_ID = os.getenv('FB_APP_ID')
+FB_APP_SECRET = os.getenv('FB_APP_SECRET')
+FB_ACCESS_TOKEN = os.getenv('FB_ACCESS_TOKEN')
+FB_AD_ACCOUNT_ID = os.getenv('FB_AD_ACCOUNT_ID')
 
 
 # --- Credenciales de Azure OpenAI ---
