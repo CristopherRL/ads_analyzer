@@ -1,3 +1,5 @@
+.gitignore
+
 # Environment variables
 .env
 .env.local

@@ -21,9 +21,6 @@ from src.logging_config import setup_logging, get_logger
 setup_logging()
 logger = get_logger(__name__)
 
-# Setup rate limiting
-limiter = Limiter(key_func=get_remote_address)
-
 # Create FastAPI application
 app = FastAPI(
     title="Digital Marketing Analysis Agent",
@@ -32,6 +29,8 @@ app = FastAPI(
     debug=DEBUG
 )
 
+# Setup rate limiting
+limiter = Limiter(key_func=get_remote_address)
 # Add rate limiting to the app
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
