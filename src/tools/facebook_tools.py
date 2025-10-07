@@ -18,7 +18,7 @@ from langchain.schema import BaseMessage
 from pydantic import BaseModel, Field
 
 from src.database import get_db
-from src.models import FacebookAccount, ApiCache
+from src.models import FacebookAccount, ApiCache, UserFacebookAccount
 from config import CACHE_EXPIRATION_HOURS, FB_APP_ID, FB_APP_SECRET, FB_ACCESS_TOKEN
 from src.logging_config import get_logger
 
@@ -410,9 +410,15 @@ class ListAvailableClientsTool(BaseTool):
             db_gen = get_db()
             db = next(db_gen)
             
-            # Query Facebook accounts for the user
-            accounts = db.query(FacebookAccount).filter(
-                FacebookAccount.user_id == user_id
+            # Query Facebook accounts for the user using the new many-to-many relationship
+            accounts = db.query(FacebookAccount).join(
+                UserFacebookAccount, 
+                FacebookAccount.id == UserFacebookAccount.facebook_account_id
+            ).filter(
+                and_(
+                    UserFacebookAccount.user_id == user_id,
+                    UserFacebookAccount.is_active == True
+                )
             ).all()
             
             if not accounts:

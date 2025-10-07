@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 
 from src.agent.memory import DatabaseConversationMemory, create_memory
 from src.tools.facebook_tools import list_available_clients_tool, facebook_ads_analysis_tool
+from src.utils.cost_calculator import CostCalculator
 from config import (
     AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY, AZURE_OPENAI_DEPLOYMENT_NAME, AZURE_API_VERSION,
     AGENT_TEMPERATURE, AGENT_MAX_TOKENS, AGENT_MAX_ITERATIONS,
@@ -81,54 +82,33 @@ class DigitalMarketingAgent:
     
     def _get_or_create_session(self, user_id: int, provided_session_id: Optional[str] = None) -> str:
         """
-        Get existing valid session or create new one.
+        Get or create a persistent session ID for the user.
         
         Args:
             user_id: User ID
-            provided_session_id: Optional session ID to validate
+            provided_session_id: Optional session ID (ignored for persistent sessions)
             
         Returns:
-            Valid session ID
+            Persistent session ID
         """
-        if provided_session_id and self._is_session_valid(provided_session_id):
-            logger.info(f"Using existing valid session: {provided_session_id}")
-            return provided_session_id
-        else:
-            new_session_id = generate_session_id(user_id)
-            logger.info(f"Created new session: {new_session_id}")
-            return new_session_id
+        # Session ID persistente: siempre el mismo para el usuario
+        persistent_session_id = f"persistent_{user_id}"
+        logger.info(f"Using persistent session: {persistent_session_id}")
+        return persistent_session_id
     
     def _is_session_valid(self, session_id: str, timeout_minutes: int = 30) -> bool:
         """
-        Check if session ID is still valid (not expired).
+        Always valid for persistent session IDs.
         
         Args:
             session_id: Session ID to validate
-            timeout_minutes: Session timeout in minutes
+            timeout_minutes: Session timeout in minutes (ignored for persistent sessions)
             
         Returns:
-            True if session is valid, False if expired
+            Always True for persistent sessions
         """
-        try:
-            # Extract timestamp from session_id (format: YYYYMMDD_HHMMSS_userid)
-            parts = session_id.split('_')
-            if len(parts) >= 3:
-                date_part = parts[0]  # YYYYMMDD
-                time_part = parts[1]  # HHMMSS
-                
-                # Parse timestamp
-                session_timestamp = datetime.strptime(f"{date_part}_{time_part}", "%Y%m%d_%H%M%S")
-                
-                # Check if session is still valid
-                timeout = timedelta(minutes=timeout_minutes)
-                return datetime.now() - session_timestamp < timeout
-            else:
-                # Invalid format, consider expired
-                return False
-                
-        except Exception as e:
-            logger.error(f"Error validating session {session_id}: {e}")
-            return False
+        # Session ID persistente: siempre válida
+        return True
     
     def _create_llm(self) -> AzureChatOpenAI:
         """
@@ -351,10 +331,22 @@ class DigitalMarketingAgent:
             response_text = response.get("output", "Sorry, I couldn't process your request.")
             logger.info(f"Response text extracted: {response_text[:100]}...")
             
-            # Save conversation to memory
+            # Prepare LLM parameters for tracking
+            llm_params = CostCalculator.get_llm_params_dict(
+                model_name=AZURE_OPENAI_DEPLOYMENT_NAME,
+                temperature=AGENT_TEMPERATURE,
+                max_tokens=AGENT_MAX_TOKENS
+            )
+            
+            # Get full prompt for tracking (system prompt + chat history + user message)
+            full_prompt = self._get_full_prompt_for_tracking(message, chat_history)
+            
+            # Save conversation to memory with full tracking
             self.memory.save_context(
                 {"input": message},
-                {"output": response_text}
+                {"output": response_text},
+                full_prompt_sent=full_prompt,
+                llm_params=llm_params
             )
             
             logger.info(f"Generated response for user {self.user_id}")
@@ -390,6 +382,45 @@ class DigitalMarketingAgent:
             Conversation summary
         """
         return self.memory.get_conversation_summary()
+    
+    def _get_full_prompt_for_tracking(self, user_message: str, chat_history: List) -> str:
+        """
+        Get the full prompt that would be sent to the LLM for tracking purposes.
+        
+        Args:
+            user_message: Current user message
+            chat_history: List of previous messages
+            
+        Returns:
+            Full prompt string for tracking
+        """
+        try:
+            # Get system prompt
+            system_prompt = self._get_system_prompt()
+            
+            # Build full prompt
+            full_prompt_parts = [f"System: {system_prompt}"]
+            
+            # Add chat history
+            for msg in chat_history:
+                if hasattr(msg, 'content'):
+                    if hasattr(msg, 'type'):
+                        if msg.type == 'human':
+                            full_prompt_parts.append(f"Human: {msg.content}")
+                        elif msg.type == 'ai':
+                            full_prompt_parts.append(f"AI: {msg.content}")
+                    else:
+                        # Fallback for different message types
+                        full_prompt_parts.append(f"Message: {msg.content}")
+            
+            # Add current user message
+            full_prompt_parts.append(f"Human: {user_message}")
+            
+            return "\n\n".join(full_prompt_parts)
+            
+        except Exception as e:
+            logger.error(f"Error building full prompt for tracking: {e}")
+            return f"System: {self._get_system_prompt()}\n\nHuman: {user_message}"
 
 # === Utility Functions ===
 

@@ -13,6 +13,7 @@ from langchain_openai import AzureChatOpenAI
 
 from src.database import get_db
 from src.models import ConversationHistory
+from src.utils.cost_calculator import CostCalculator
 from config import (
     AZURE_OPENAI_ENDPOINT, 
     AZURE_OPENAI_API_KEY,
@@ -175,31 +176,57 @@ class DatabaseConversationMemory:
             if 'db' in locals():
                 db.close()
     
-    def _save_conversation_pair(self, human_message: str, ai_message: str) -> None:
+    def _save_conversation_pair(self, human_message: str, ai_message: str, 
+                               full_prompt_sent: str = None, llm_params: dict = None) -> None:
         """
-        Save a conversation pair (human message + AI response) to database.
+        Save a conversation pair (human message + AI response) to database with full tracking.
         
         Args:
             human_message: User's message
             ai_message: AI agent's response
+            full_prompt_sent: Complete prompt sent to LLM (optional)
+            llm_params: LLM parameters used (optional)
         """
         try:
             db_gen = get_db()
             db = next(db_gen)
             
-            # Create conversation history record
+            # Calculate token usage and cost
+            tokens_used = 0
+            estimated_cost = None
+            
+            if full_prompt_sent and ai_message:
+                # Estimate tokens for input and output
+                input_tokens = CostCalculator.estimate_tokens_from_text(full_prompt_sent)
+                output_tokens = CostCalculator.estimate_tokens_from_text(ai_message)
+                tokens_used = input_tokens + output_tokens
+                
+                # Calculate cost if we have model information
+                model_name = 'default'
+                if llm_params and 'model_name' in llm_params:
+                    model_name = llm_params['model_name']
+                
+                estimated_cost = CostCalculator.calculate_cost(
+                    input_tokens, output_tokens, model_name
+                )
+            
+            # Create conversation history record with full tracking
             conversation = ConversationHistory(
                 user_id=self.user_id,
                 session_id=self.session_id,
                 user_prompt=human_message,
+                full_prompt_sent=full_prompt_sent,
                 llm_response=ai_message,
+                llm_params=llm_params,
+                tokens_used=tokens_used,
+                estimated_cost_usd=estimated_cost,
                 timestamp=datetime.now()
             )
             
             db.add(conversation)
             db.commit()
             
-            logger.info(f"Saved conversation pair to database for session {self.session_id}")
+            logger.info(f"Saved conversation pair to database for session {self.session_id} (tokens: {tokens_used}, cost: ${estimated_cost})")
             
         except Exception as e:
             logger.error(f"Error saving conversation to database: {e}")
@@ -298,8 +325,9 @@ class DatabaseConversationMemory:
         """Load memory variables."""
         return self._memory.load_memory_variables(inputs)
     
-    def save_context(self, inputs: Dict[str, Any], outputs: Dict[str, str]) -> None:
-        """Save context to both internal memory and database."""
+    def save_context(self, inputs: Dict[str, Any], outputs: Dict[str, str], 
+                    full_prompt_sent: str = None, llm_params: dict = None) -> None:
+        """Save context to both internal memory and database with full tracking."""
         # Call internal memory method to update in-memory state
         self._memory.save_context(inputs, outputs)
         
@@ -307,9 +335,9 @@ class DatabaseConversationMemory:
         human_message = inputs.get("input", "")
         ai_message = outputs.get("output", "")
         
-        # Save to database
+        # Save to database with full tracking
         if human_message and ai_message:
-            self._save_conversation_pair(human_message, ai_message)
+            self._save_conversation_pair(human_message, ai_message, full_prompt_sent, llm_params)
 
 # === Memory Factory Function ===
 

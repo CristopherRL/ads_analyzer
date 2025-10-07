@@ -1,6 +1,6 @@
 # === File: src/models.py ===
 
-from sqlalchemy import Column, Integer, String, DateTime, Text, JSON, Boolean, Index, ForeignKey
+from sqlalchemy import Column, Integer, String, DateTime, Text, JSON, Boolean, Index, ForeignKey, DECIMAL
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from src.database import Base
@@ -21,33 +21,34 @@ class User(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), comment="User last update timestamp")
     
     # Relationships
-    facebook_accounts = relationship("FacebookAccount", back_populates="user")
+    user_facebook_accounts = relationship("UserFacebookAccount", foreign_keys="UserFacebookAccount.user_id", back_populates="user")
     conversations = relationship("ConversationHistory", back_populates="user")
+    analysis_results = relationship("AnalysisResult", back_populates="user")
     
     def __repr__(self):
         return f"<User(id={self.id}, email='{self.email}', name='{self.name}')>"
 
 class FacebookAccount(Base):
     """
-    Model for Facebook advertising accounts associated with users.
+    Model for Facebook advertising accounts.
     Stores account information and references to Azure Key Vault secrets.
+    Note: user_id removed - use UserFacebookAccount for many-to-many relationship.
     """
     __tablename__ = "facebook_accounts"
     
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True, comment="Foreign key to users table")
     ad_account_id = Column(String(255), nullable=False, unique=True, comment="Facebook Ad Account ID (e.g., act_123456)")
     account_name = Column(String(255), comment="Human-readable account name")
     key_vault_secret_name = Column(String(255), nullable=False, unique=True, comment="Azure Key Vault secret name for access token")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), comment="Account creation timestamp")
     
     # Relationships
-    user = relationship("User", back_populates="facebook_accounts")
-    api_caches = relationship("ApiCache", back_populates="facebook_account")
+    user_facebook_accounts = relationship("UserFacebookAccount", back_populates="facebook_account")
     campaign_data = relationship("CampaignPerformanceData", back_populates="facebook_account")
+    analysis_results = relationship("AnalysisResult", back_populates="facebook_account")
     
     def __repr__(self):
-        return f"<FacebookAccount(id={self.id}, user_id='{self.user_id}', ad_account_id='{self.ad_account_id}')>"
+        return f"<FacebookAccount(id={self.id}, ad_account_id='{self.ad_account_id}')>"
 
 class ApiCache(Base):
     """
@@ -63,9 +64,7 @@ class ApiCache(Base):
     result_json = Column(JSON, comment="Complete API result in JSONB format")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), comment="Cache creation timestamp")
     
-    # Foreign key relationship
-    facebook_account_id = Column(Integer, ForeignKey("facebook_accounts.id"), nullable=True, comment="Reference to facebook_accounts.id")
-    facebook_account = relationship("FacebookAccount", back_populates="api_caches")
+    # Note: facebook_account_id removed - ad_account_id is sufficient for identification
     
     # Indexes for performance
     __table_args__ = (
@@ -91,7 +90,7 @@ class ConversationHistory(Base):
     llm_response = Column(Text, comment="LLM response")
     llm_params = Column(JSON, comment="LLM model parameters (temperature, etc.)")
     tokens_used = Column(Integer, comment="Number of tokens used")
-    estimated_cost_usd = Column(Integer, comment="Estimated cost in USD (scaled by 1000000)")
+    estimated_cost_usd = Column(DECIMAL(10,4), comment="Estimated cost in USD")
     timestamp = Column(DateTime(timezone=True), server_default=func.now(), comment="Message timestamp")
     
     # Relationships
@@ -155,3 +154,89 @@ class CampaignPerformanceData(Base):
     
     def __repr__(self):
         return f"<CampaignPerformanceData(id={self.id}, ad_account_id='{self.ad_account_id}', campaign_id='{self.campaign_id}')>"
+
+class ModelPricing(Base):
+    """
+    Model for storing Azure OpenAI model pricing information.
+    Enables cost calculation for token usage tracking.
+    """
+    __tablename__ = "model_pricing"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    model_name = Column(String(100), nullable=False, comment="Model name (e.g., gpt-4-turbo)")
+    input_cost_per_1k_tokens = Column(DECIMAL(10,6), nullable=False, comment="Cost per 1000 input tokens in USD")
+    output_cost_per_1k_tokens = Column(DECIMAL(10,6), nullable=False, comment="Cost per 1000 output tokens in USD")
+    effective_date = Column(DateTime(timezone=True), nullable=False, comment="Date when these prices become effective")
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), comment="Record creation timestamp")
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), comment="Record last update timestamp")
+    
+    # Indexes for performance
+    __table_args__ = (
+        Index('idx_model_pricing_model_date', 'model_name', 'effective_date'),
+    )
+    
+    def __repr__(self):
+        return f"<ModelPricing(id={self.id}, model_name='{self.model_name}', effective_date='{self.effective_date}')>"
+
+class UserFacebookAccount(Base):
+    """
+    Model for many-to-many relationship between users and Facebook accounts.
+    Enables multiple users to access the same Facebook account.
+    """
+    __tablename__ = "user_facebook_accounts"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, comment="Foreign key to users table")
+    facebook_account_id = Column(Integer, ForeignKey("facebook_accounts.id", ondelete="CASCADE"), nullable=False, comment="Foreign key to facebook_accounts table")
+    assigned_at = Column(DateTime(timezone=True), server_default=func.now(), comment="Assignment timestamp")
+    assigned_by = Column(Integer, ForeignKey("users.id"), nullable=True, comment="User who made the assignment")
+    is_active = Column(Boolean, default=True, comment="Whether the assignment is active")
+    notes = Column(Text, comment="Additional notes about the assignment")
+    
+    # Relationships
+    user = relationship("User", foreign_keys=[user_id], back_populates="user_facebook_accounts")
+    facebook_account = relationship("FacebookAccount", back_populates="user_facebook_accounts")
+    assigned_by_user = relationship("User", foreign_keys=[assigned_by])
+    
+    # Unique constraint and indexes
+    __table_args__ = (
+        Index('idx_user_facebook_accounts_user_id', 'user_id'),
+        Index('idx_user_facebook_accounts_facebook_id', 'facebook_account_id'),
+        Index('idx_user_facebook_accounts_active', 'is_active'),
+        Index('idx_user_facebook_unique', 'user_id', 'facebook_account_id', unique=True),
+    )
+    
+    def __repr__(self):
+        return f"<UserFacebookAccount(id={self.id}, user_id='{self.user_id}', facebook_account_id='{self.facebook_account_id}')>"
+
+class AnalysisResult(Base):
+    """
+    Model for storing analysis results generated by the LLM.
+    Stores complete analysis text and metadata for campaign analysis.
+    """
+    __tablename__ = "analysis_results"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, comment="Foreign key to users table")
+    session_id = Column(String(100), comment="Conversation session identifier")
+    analysis_type = Column(String(50), nullable=False, comment="Type of analysis performed")
+    facebook_account_id = Column(Integer, ForeignKey("facebook_accounts.id"), nullable=True, comment="Foreign key to facebook_accounts table")
+    result_text = Column(Text, nullable=False, comment="Complete analysis text generated by LLM")
+    analysis_metadata = Column(JSON, comment="Additional metadata (campaigns analyzed, dates, metrics, etc.)")
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), comment="Analysis creation timestamp")
+    
+    # Relationships
+    user = relationship("User", back_populates="analysis_results")
+    facebook_account = relationship("FacebookAccount", back_populates="analysis_results")
+    
+    # Indexes for performance
+    __table_args__ = (
+        Index('idx_analysis_results_user_id', 'user_id'),
+        Index('idx_analysis_results_session_id', 'session_id'),
+        Index('idx_analysis_results_type', 'analysis_type'),
+        Index('idx_analysis_results_facebook_account', 'facebook_account_id'),
+        Index('idx_analysis_results_created_at', 'created_at'),
+    )
+    
+    def __repr__(self):
+        return f"<AnalysisResult(id={self.id}, user_id='{self.user_id}', analysis_type='{self.analysis_type}')>"

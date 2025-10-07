@@ -6,6 +6,34 @@ Esta carpeta contiene todos los scripts de prueba para verificar la configuraci�
 
 ### 🔧 Scripts de Diagnóstico
 
+#### `test_persistent_sessions.py`
+Script para verificar el comportamiento de session IDs persistentes.
+
+**Uso:**
+```bash
+python test/test_persistent_sessions.py
+```
+
+**Verifica:**
+- Session IDs persistentes para el mismo usuario
+- Session IDs diferentes para usuarios diferentes
+- Formato correcto de session ID (`persistent_{user_id}`)
+
+#### `test_database_migration.py`
+Script para verificar la migración de base de datos y nuevas funcionalidades.
+
+**Uso:**
+```bash
+python test/test_database_migration.py
+```
+
+**Verifica:**
+- Nuevas tablas creadas (model_pricing, user_facebook_accounts, analysis_results)
+- Campos nuevos en conversation_history
+- Funcionalidad de CostCalculator
+- Relaciones many-to-many entre usuarios y cuentas Facebook
+- Limpieza de columnas duplicadas
+
 #### `test_facebook_direct.py`
 **Script principal recomendado** - Prueba Facebook API usando requests directamente
 ```bash
