@@ -10,6 +10,8 @@ from datetime import datetime, timedelta
 from src.agent.memory import DatabaseConversationMemory, create_memory
 from src.tools.facebook_tools import list_available_clients_tool, facebook_ads_analysis_tool
 from src.utils.cost_calculator import CostCalculator
+from src.database import get_db
+from src.models import AnalysisResult, FacebookAccount
 from config import (
     AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY, AZURE_OPENAI_DEPLOYMENT_NAME, AZURE_API_VERSION,
     AGENT_TEMPERATURE, AGENT_MAX_TOKENS, AGENT_MAX_ITERATIONS,
@@ -294,7 +296,8 @@ class DigitalMarketingAgent:
             verbose=True,  # Enable detailed logging
             handle_parsing_errors=True,  # Handle tool parsing errors gracefully
             max_iterations=AGENT_MAX_ITERATIONS,  # Configurable limit to prevent infinite loops
-            early_stopping_method="generate"  # Stop early if agent generates final answer
+            early_stopping_method="generate",  # Stop early if agent generates final answer
+            return_intermediate_steps=True  # Include intermediate steps in response
         )
     
     def process_message(self, message: str) -> str:
@@ -331,6 +334,17 @@ class DigitalMarketingAgent:
             response_text = response.get("output", "Sorry, I couldn't process your request.")
             logger.info(f"Response text extracted: {response_text[:100]}...")
             
+            # Extract tool/function used from response (try multiple methods)
+            tool_used = self._extract_tool_used(response)
+            if not tool_used:
+                # Try to extract from intermediate steps if available
+                tool_used = self._extract_tool_from_intermediate_steps(response)
+            logger.info(f"Tool used: {tool_used}")
+            
+            # Extract tool parameters (like facebook_account_id) from response
+            tool_params = self._extract_tool_parameters(response)
+            logger.info(f"Tool parameters: {tool_params}")
+            
             # Prepare LLM parameters for tracking
             llm_params = CostCalculator.get_llm_params_dict(
                 model_name=AZURE_OPENAI_DEPLOYMENT_NAME,
@@ -348,6 +362,10 @@ class DigitalMarketingAgent:
                 full_prompt_sent=full_prompt,
                 llm_params=llm_params
             )
+            
+            # Check if a tool was used and save analysis result
+            if tool_used:
+                self._save_analysis_result(response_text, tool_used, message, tool_params)
             
             logger.info(f"Generated response for user {self.user_id}")
             return response_text
@@ -421,6 +439,229 @@ class DigitalMarketingAgent:
         except Exception as e:
             logger.error(f"Error building full prompt for tracking: {e}")
             return f"System: {self._get_system_prompt()}\n\nHuman: {user_message}"
+    
+    def _extract_tool_used(self, response: Dict[str, Any]) -> Optional[str]:
+        """
+        Extract the tool/function name used by the agent from the response.
+        
+        Args:
+            response: The agent's response dictionary
+            
+        Returns:
+            Tool name if a tool was used, None otherwise
+        """
+        try:
+            # Check if the response contains intermediate steps (tool calls)
+            if 'intermediate_steps' in response:
+                intermediate_steps = response['intermediate_steps']
+                if intermediate_steps:
+                    # Get the last tool used
+                    last_step = intermediate_steps[-1]
+                    if len(last_step) >= 2:
+                        action = last_step[0]
+                        if hasattr(action, 'tool'):
+                            tool_name = action.tool
+                            logger.info(f"Tool used: {tool_name}")
+                            return tool_name
+                        elif hasattr(action, 'tool_name'):
+                            tool_name = action.tool_name
+                            logger.info(f"Tool used: {tool_name}")
+                            return tool_name
+            
+            # Alternative: check if response contains tool information in other formats
+            if isinstance(response, dict):
+                # Look for tool information in various possible locations
+                for key in ['tool', 'tool_name', 'function_name', 'action']:
+                    if key in response and response[key]:
+                        logger.info(f"Tool found in {key}: {response[key]}")
+                        return str(response[key])
+            
+            logger.info("No tool was used in this response")
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error extracting tool used: {e}")
+            return None
+    
+    def _extract_tool_from_intermediate_steps(self, response: Dict[str, Any]) -> Optional[str]:
+        """
+        Extract tool name from intermediate steps in the response.
+        
+        Args:
+            response: The agent's response dictionary
+            
+        Returns:
+            Tool name if found in intermediate steps, None otherwise
+        """
+        try:
+            # Check if intermediate_steps exists and has content
+            if 'intermediate_steps' in response and response['intermediate_steps']:
+                intermediate_steps = response['intermediate_steps']
+                logger.info(f"Found {len(intermediate_steps)} intermediate steps")
+                
+                # Get the last tool used (most recent)
+                for step in reversed(intermediate_steps):
+                    if len(step) >= 2:
+                        action = step[0]
+                        # Check various possible attributes for tool name
+                        if hasattr(action, 'tool') and action.tool:
+                            logger.info(f"Found tool in action.tool: {action.tool}")
+                            return action.tool
+                        elif hasattr(action, 'tool_name') and action.tool_name:
+                            logger.info(f"Found tool in action.tool_name: {action.tool_name}")
+                            return action.tool_name
+                        elif hasattr(action, 'action') and action.action:
+                            logger.info(f"Found tool in action.action: {action.action}")
+                            return action.action
+                
+                logger.info("No tool found in intermediate steps")
+                return None
+            else:
+                logger.info("No intermediate steps found in response")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error extracting tool from intermediate steps: {e}")
+            return None
+    
+    def _extract_tool_parameters(self, response: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Extract tool parameters from the response.
+        
+        Args:
+            response: The agent's response dictionary
+            
+        Returns:
+            Dictionary with tool parameters (e.g., {'ad_account_id': 'act_123456'})
+        """
+        try:
+            # Check if intermediate_steps exists and has content
+            if 'intermediate_steps' in response and response['intermediate_steps']:
+                intermediate_steps = response['intermediate_steps']
+                logger.info(f"Extracting parameters from {len(intermediate_steps)} intermediate steps")
+                
+                # Get parameters from the last tool used (most recent)
+                for step in reversed(intermediate_steps):
+                    if len(step) >= 2:
+                        action = step[0]
+                        # Check for tool_input parameter
+                        if hasattr(action, 'tool_input') and action.tool_input:
+                            tool_input = action.tool_input
+                            logger.info(f"Found tool parameters: {tool_input}")
+                            return tool_input
+                
+                logger.info("No tool parameters found in intermediate steps")
+                return {}
+            else:
+                logger.info("No intermediate steps found for parameter extraction")
+                return {}
+                
+        except Exception as e:
+            logger.error(f"Error extracting tool parameters: {e}")
+            return {}
+    
+    def _save_analysis_result(self, response_text: str, tool_used: str, user_message: str, tool_params: Dict[str, Any] = None) -> None:
+        """
+        Save analysis result to the database.
+        
+        Args:
+            response_text: The complete analysis text
+            tool_used: Name of the tool/function used by the agent
+            user_message: Original user message that triggered the analysis
+            tool_params: Parameters passed to the tool (e.g., {'ad_account_id': 'act_123456'})
+        """
+        try:
+            db_gen = get_db()
+            db = next(db_gen)
+            
+            # Extract Facebook account ID from tool parameters or fallback to text extraction
+            facebook_account_id = None
+            if tool_params and 'ad_account_id' in tool_params:
+                # Get Facebook account ID from tool parameters
+                ad_account_id = tool_params['ad_account_id']
+                facebook_account = db.query(FacebookAccount).filter(
+                    FacebookAccount.ad_account_id == ad_account_id
+                ).first()
+                if facebook_account:
+                    facebook_account_id = facebook_account.id
+                    logger.info(f"Found Facebook account ID: {facebook_account_id} for {ad_account_id}")
+                else:
+                    logger.warning(f"Facebook account not found in database for {ad_account_id}")
+            else:
+                # Fallback to text extraction method
+                facebook_account_id = self._extract_facebook_account_id(user_message, response_text, db)
+            
+            # Prepare metadata including tool parameters
+            metadata = {
+                'tool_used': tool_used,
+                'tool_parameters': tool_params or {},
+                'user_message': user_message,
+                'response_length': len(response_text),
+                'saved_at': datetime.now().isoformat(),
+                'session_id': self.memory.session_id
+            }
+            
+            # Create analysis result record using tool name as analysis_type
+            analysis_result = AnalysisResult(
+                user_id=self.user_id,
+                session_id=self.memory.session_id,
+                analysis_type=tool_used,  # Use tool name as analysis type
+                facebook_account_id=facebook_account_id,
+                result_text=response_text,
+                analysis_metadata=metadata
+            )
+            
+            db.add(analysis_result)
+            db.commit()
+            
+            logger.info(f"Saved analysis result using tool: {tool_used} for user {self.user_id} with facebook_account_id: {facebook_account_id}")
+            
+        except Exception as e:
+            logger.error(f"Error saving analysis result: {e}")
+            if 'db' in locals():
+                db.rollback()
+        finally:
+            if 'db' in locals():
+                db.close()
+    
+    def _extract_facebook_account_id(self, user_message: str, response_text: str, db) -> Optional[int]:
+        """
+        Try to extract Facebook account ID from message or response.
+        
+        Args:
+            user_message: Original user message
+            response_text: AI response text
+            db: Database session
+            
+        Returns:
+            Facebook account ID if found, None otherwise
+        """
+        try:
+            import re
+            
+            # Look for account ID patterns in both messages
+            text_to_search = f"{user_message} {response_text}"
+            
+            # Pattern for Facebook account IDs (act_ followed by numbers)
+            account_pattern = r'act_(\d+)'
+            matches = re.findall(account_pattern, text_to_search)
+            
+            if matches:
+                # Get the first match and try to find it in the database
+                account_id = f"act_{matches[0]}"
+                facebook_account = db.query(FacebookAccount).filter(
+                    FacebookAccount.ad_account_id == account_id
+                ).first()
+                
+                if facebook_account:
+                    logger.info(f"Found Facebook account ID: {facebook_account.id} for {account_id}")
+                    return facebook_account.id
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error extracting Facebook account ID: {e}")
+            return None
 
 # === Utility Functions ===
 

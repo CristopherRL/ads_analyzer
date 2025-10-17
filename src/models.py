@@ -155,6 +155,31 @@ class CampaignPerformanceData(Base):
     def __repr__(self):
         return f"<CampaignPerformanceData(id={self.id}, ad_account_id='{self.ad_account_id}', campaign_id='{self.campaign_id}')>"
 
+class ModelMapping(Base):
+    """
+    Model for mapping assigned model names to generic model names.
+    Enables cost calculation by mapping specific deployment names to pricing models.
+    """
+    __tablename__ = "model_mappings"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    api_provider = Column(String(50), nullable=False, comment="API provider (e.g., azure_openai, openai)")
+    assigned_model_name = Column(String(100), nullable=False, comment="Assigned model name in API (e.g., gpt-4o_analyst)")
+    generic_model_name = Column(String(100), nullable=False, comment="Generic model name for pricing (e.g., gpt-4o)")
+    is_active = Column(Boolean, default=True, comment="Whether this mapping is active")
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), comment="Mapping creation timestamp")
+    
+    # Indexes for performance
+    __table_args__ = (
+        Index('idx_model_mapping_assigned', 'assigned_model_name'),
+        Index('idx_model_mapping_generic', 'generic_model_name'),
+        Index('idx_model_mapping_provider', 'api_provider'),
+        Index('idx_model_mapping_active', 'is_active'),
+    )
+    
+    def __repr__(self):
+        return f"<ModelMapping(id={self.id}, assigned='{self.assigned_model_name}', generic='{self.generic_model_name}')>"
+
 class ModelPricing(Base):
     """
     Model for storing Azure OpenAI model pricing information.

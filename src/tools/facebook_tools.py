@@ -18,7 +18,7 @@ from langchain.schema import BaseMessage
 from pydantic import BaseModel, Field
 
 from src.database import get_db
-from src.models import FacebookAccount, ApiCache, UserFacebookAccount
+from src.models import FacebookAccount, ApiCache, UserFacebookAccount, CampaignPerformanceData
 from config import CACHE_EXPIRATION_HOURS, FB_APP_ID, FB_APP_SECRET, FB_ACCESS_TOKEN
 from src.logging_config import get_logger
 
@@ -385,6 +385,107 @@ def _save_to_cache(ad_account_id: str, campaign_type: str, start_date: datetime,
         db.rollback()
         return False
 
+def _save_campaign_performance_data(ad_account_id: str, campaigns_data: List[Dict], db: Session) -> bool:
+    """
+    Extract and save individual campaign performance data to campaign_performance_data table.
+    
+    Args:
+        ad_account_id: Facebook Ad Account ID
+        campaigns_data: List of campaign data dictionaries
+        db: Database session
+    
+    Returns:
+        True if saved successfully, False otherwise
+    """
+    try:
+        if not campaigns_data:
+            logger.info("No campaign data to save")
+            return True
+        
+        # Get Facebook account ID for foreign key
+        facebook_account = db.query(FacebookAccount).filter(
+            FacebookAccount.ad_account_id == ad_account_id
+        ).first()
+        
+        facebook_account_id = facebook_account.id if facebook_account else None
+        
+        saved_count = 0
+        
+        for campaign_data in campaigns_data:
+            try:
+                # Extract campaign information
+                campaign_id = campaign_data.get('ID de campaña', '')
+                campaign_name = campaign_data.get('Nombre de campaña', '')
+                
+                if not campaign_id:
+                    logger.warning(f"Skipping campaign without ID: {campaign_data}")
+                    continue
+                
+                # Prepare metrics JSON
+                metrics = {
+                    'spend_clp': campaign_data.get('Importe gastado (CLP)', 0),
+                    'results': campaign_data.get('Resultados', 0),
+                    'impressions': campaign_data.get('Impresiones', 0),
+                    'clicks': campaign_data.get('Clics', 0),
+                    'ctr': campaign_data.get('CTR (tasa de clics)', 0),
+                    'cpc': campaign_data.get('CPC (costo por clic)', 0),
+                    'cpm': campaign_data.get('CPM (costo por 1000 impresiones)', 0),
+                    'reach': campaign_data.get('Alcance', 0),
+                    'frequency': campaign_data.get('Frecuencia', 0),
+                    'cost_per_result': campaign_data.get('Costo por resultado', 0)
+                }
+                
+                # Try to extract date from campaign data or use current date
+                campaign_date = campaign_data.get('date', datetime.now())
+                if isinstance(campaign_date, str):
+                    try:
+                        campaign_date = datetime.fromisoformat(campaign_date.replace('Z', '+00:00'))
+                    except:
+                        campaign_date = datetime.now()
+                
+                # Check if record already exists for this campaign and date
+                existing_record = db.query(CampaignPerformanceData).filter(
+                    and_(
+                        CampaignPerformanceData.ad_account_id == ad_account_id,
+                        CampaignPerformanceData.campaign_id == campaign_id,
+                        CampaignPerformanceData.date == campaign_date
+                    )
+                ).first()
+                
+                if existing_record:
+                    # Update existing record
+                    existing_record.metrics = metrics
+                    existing_record.campaign_name = campaign_name
+                    logger.info(f"Updated existing campaign performance data: {campaign_id}")
+                else:
+                    # Create new record
+                    performance_record = CampaignPerformanceData(
+                        ad_account_id=ad_account_id,
+                        campaign_id=campaign_id,
+                        campaign_name=campaign_name,
+                        date=campaign_date,
+                        metrics=metrics,
+                        facebook_account_id=facebook_account_id
+                    )
+                    
+                    db.add(performance_record)
+                    logger.info(f"Added new campaign performance data: {campaign_id}")
+                
+                saved_count += 1
+                
+            except Exception as e:
+                logger.error(f"Error processing campaign data {campaign_data}: {e}")
+                continue
+        
+        db.commit()
+        logger.info(f"Saved {saved_count} campaign performance records for {ad_account_id}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error saving campaign performance data: {e}")
+        db.rollback()
+        return False
+
 # === LangChain Tools ===
 
 class ListAvailableClientsTool(BaseTool):
@@ -498,9 +599,12 @@ class FacebookAdsAnalysisTool(BaseTool):
                     filtered_campaigns = _filter_campaigns_by_type(campaigns_list, campaign_type)
                     df_last_month = pd.DataFrame(filtered_campaigns) if filtered_campaigns else pd.DataFrame()
                 
-                # Save to cache
+                # Save to cache and detailed performance data
                 if not df_last_month.empty:
-                    _save_to_cache(ad_account_id, campaign_type, last_month_start, last_month_end, df_last_month.to_dict('records'), db)
+                    campaigns_data = df_last_month.to_dict('records')
+                    _save_to_cache(ad_account_id, campaign_type, last_month_start, last_month_end, campaigns_data, db)
+                    # Also save detailed campaign performance data
+                    _save_campaign_performance_data(ad_account_id, campaigns_data, db)
             
             # Get data for previous month
             if prev_month_cached:
@@ -517,9 +621,12 @@ class FacebookAdsAnalysisTool(BaseTool):
                     filtered_campaigns = _filter_campaigns_by_type(campaigns_list, campaign_type)
                     df_prev_month = pd.DataFrame(filtered_campaigns) if filtered_campaigns else pd.DataFrame()
                 
-                # Save to cache
+                # Save to cache and detailed performance data
                 if not df_prev_month.empty:
-                    _save_to_cache(ad_account_id, campaign_type, prev_month_start, prev_month_end, df_prev_month.to_dict('records'), db)
+                    campaigns_data = df_prev_month.to_dict('records')
+                    _save_to_cache(ad_account_id, campaign_type, prev_month_start, prev_month_end, campaigns_data, db)
+                    # Also save detailed campaign performance data
+                    _save_campaign_performance_data(ad_account_id, campaigns_data, db)
             
             # Prepare response
             if df_last_month.empty and df_prev_month.empty:

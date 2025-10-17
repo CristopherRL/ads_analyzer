@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import and_
 
 from src.database import get_db
-from src.models import ModelPricing
+from src.models import ModelPricing, ModelMapping
 from src.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -16,6 +16,43 @@ class CostCalculator:
     """
     Utility class for calculating LLM usage costs based on token consumption.
     """
+    
+    @staticmethod
+    def get_generic_model_name(assigned_model_name: str) -> str:
+        """
+        Get the generic model name from assigned model name using model mappings.
+        
+        Args:
+            assigned_model_name: The assigned model name (e.g., 'gpt-4o_analyst')
+            
+        Returns:
+            Generic model name for pricing lookup, or the original name if no mapping found
+        """
+        try:
+            db_gen = get_db()
+            db = next(db_gen)
+            
+            # Look for active mapping
+            mapping = db.query(ModelMapping).filter(
+                and_(
+                    ModelMapping.assigned_model_name == assigned_model_name,
+                    ModelMapping.is_active == True
+                )
+            ).first()
+            
+            if mapping:
+                logger.info(f"Mapped {assigned_model_name} -> {mapping.generic_model_name}")
+                return mapping.generic_model_name
+            else:
+                logger.warning(f"No mapping found for {assigned_model_name}, using original name")
+                return assigned_model_name
+                
+        except Exception as e:
+            logger.error(f"Error getting generic model name: {e}")
+            return assigned_model_name
+        finally:
+            if 'db' in locals():
+                db.close()
     
     @staticmethod
     def get_model_pricing(model_name: str, effective_date: Optional[datetime] = None) -> Optional[Dict[str, Decimal]]:
@@ -81,31 +118,54 @@ class CostCalculator:
         Args:
             input_tokens: Number of input tokens used
             output_tokens: Number of output tokens used
-            model_name: Name of the model used
+            model_name: Name of the model used (assigned or generic)
             
         Returns:
             Total cost in USD, or None if calculation fails
         """
         try:
-            pricing = CostCalculator.get_model_pricing(model_name)
+            # First try to get generic model name if it's an assigned name
+            generic_model_name = CostCalculator.get_generic_model_name(model_name)
+            
+            # Get pricing for the generic model name
+            pricing = CostCalculator.get_model_pricing(generic_model_name)
             
             if not pricing:
-                logger.warning(f"Could not calculate cost for model {model_name}")
+                logger.warning(f"Could not calculate cost for model {model_name} (generic: {generic_model_name})")
                 return None
             
-            # Calculate costs
-            input_cost = (input_tokens / 1000) * pricing['input_cost_per_1k_tokens']
-            output_cost = (output_tokens / 1000) * pricing['output_cost_per_1k_tokens']
+            # Calculate costs (convert to Decimal for proper calculation)
+            input_cost = Decimal(input_tokens) / Decimal(1000) * pricing['input_cost_per_1k_tokens']
+            output_cost = Decimal(output_tokens) / Decimal(1000) * pricing['output_cost_per_1k_tokens']
             
             total_cost = input_cost + output_cost
             
-            logger.info(f"Cost calculation: {input_tokens} input + {output_tokens} output tokens = ${total_cost:.6f}")
+            logger.info(f"Cost calculation for {model_name} -> {generic_model_name}: {input_tokens} input + {output_tokens} output tokens = ${total_cost:.6f}")
             
             return total_cost
             
         except Exception as e:
             logger.error(f"Error calculating cost: {e}")
             return None
+    
+    @staticmethod
+    def calculate_cost_with_mapping(
+        input_tokens: int, 
+        output_tokens: int, 
+        assigned_model_name: str
+    ) -> Optional[Decimal]:
+        """
+        Calculate cost using model mapping (explicit method for clarity).
+        
+        Args:
+            input_tokens: Number of input tokens used
+            output_tokens: Number of output tokens used
+            assigned_model_name: The assigned model name (e.g., 'gpt-4o_analyst')
+            
+        Returns:
+            Total cost in USD, or None if calculation fails
+        """
+        return CostCalculator.calculate_cost(input_tokens, output_tokens, assigned_model_name)
     
     @staticmethod
     def estimate_tokens_from_text(text: str) -> int:

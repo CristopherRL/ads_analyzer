@@ -61,3 +61,6 @@ docs/internal/
 *.temp
 
 notebooks/
+
+tests/__pycache__/
+WARP.md
