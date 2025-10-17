@@ -1,7 +1,7 @@
 import pytest
 from sqlalchemy import inspect
 
-from src.database import engine, test_connection
+from src.database import engine, check_connection
 
 
 EXPECTED_COLUMNS = {
@@ -19,7 +19,7 @@ EXPECTED_COLUMNS = {
 
 @pytest.mark.integration
 def test_tables_exist_and_columns_match():
-    if not test_connection():
+    if not check_connection():
         pytest.skip("Database not reachable in this environment")
 
     insp = inspect(engine)

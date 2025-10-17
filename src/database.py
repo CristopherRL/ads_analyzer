@@ -1,7 +1,7 @@
 # === File: src/database.py ===
 
 from sqlalchemy import create_engine, text
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import declarative_base
 from sqlalchemy.orm import sessionmaker
 from config import DATABASE_CONNECTION_STRING
 import logging
@@ -70,7 +70,7 @@ def create_tables():
         logger.error(f"Failed to create database tables: {e}")
         raise
 
-def test_connection():
+def check_connection():
     """
     Test database connection.
     Returns True if connection is successful, False otherwise.

@@ -1,7 +1,7 @@
 import pytest
 from sqlalchemy import text
 
-from src.database import engine, SessionLocal, test_connection
+from src.database import engine, SessionLocal, check_connection
 
 
 EXPECTED_INDEXES = [
@@ -19,7 +19,7 @@ EXPECTED_INDEXES = [
 
 @pytest.mark.integration
 def test_expected_indexes_exist_postgres():
-    if not test_connection():
+    if not check_connection():
         pytest.skip("Database not reachable in this environment")
     if engine.dialect.name != 'postgresql':
         pytest.skip("Index check uses pg_indexes; skipping for non-PostgreSQL")

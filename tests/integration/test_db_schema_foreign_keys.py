@@ -1,7 +1,7 @@
 import pytest
 from sqlalchemy import text
 
-from src.database import engine, SessionLocal, test_connection
+from src.database import engine, SessionLocal, check_connection
 
 
 EXPECTED_FKS = {
@@ -16,7 +16,7 @@ EXPECTED_FKS = {
 
 @pytest.mark.integration
 def test_expected_foreign_keys_exist_postgres():
-    if not test_connection():
+    if not check_connection():
         pytest.skip("Database not reachable in this environment")
     if engine.dialect.name != 'postgresql':
         pytest.skip("FK check uses information_schema; skipping for non-PostgreSQL")
