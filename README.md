@@ -23,29 +23,33 @@ This application provides a conversational AI agent that helps analyze Facebook 
 ## 📁 Project Structure
 
 ```
-ads_analyzer/
-├── .env                          # Environment variables (create from .env.example)
-├── config.py                     # Configuration management
-├── main.py                       # FastAPI application entry point
-├── requirements.txt              # Python dependencies
-├── src/
-│   ├── __init__.py
-│   ├── database.py               # Database connection and session management
-│   ├── models.py                 # SQLAlchemy models
-│   ├── schemas.py                # Pydantic schemas
-│   ├── logging_config.py         # Logging configuration
-│   ├── prompts/
-│   │   └── default_system_prompt.txt
-│   ├── tools/
-│   │   ├── __init__.py
-│   │   └── facebook_tools.py     # LangChain tools for Facebook API
-│   └── agent/
-│       ├── __init__.py
-│       ├── memory.py             # Database-backed conversation memory
-│       └── agent_executor.py     # LangChain agent implementation
-├── logs/
-│   └── app.log                   # Application logs (auto-created)
-└── README.md
+.
+├── .env.example
+├── .gitignore
+├── Dockerfile
+├── README.md
+├── config.py
+├── main.py
+├── pytest.ini
+├── requirements.txt
+├── src
+│   ├── __init__.py
+│   ├── agent
+│   │   ├── __init__.py
+│   │   ├── agent_executor.py
+│   │   └── memory.py
+│   ├── database.py
+│   ├── logging_config.py
+│   ├── models.py
+│   ├── prompts
+│   │   └── default_system_prompt.txt
+│   ├── schemas.py
+│   └── tools
+│       ├── __init__.py
+│       └── facebook_tools.py
+└── tests
+    ├── __init__.py
+    └── test_main.py
 ```
 
 ## 🛠️ Local Setup
@@ -62,7 +66,7 @@ ads_analyzer/
 ```bash
 # Clone the repository
 git clone <repository-url>
-cd ads_analyzer
+cd <repository-name>
 
 # Create virtual environment
 python -m venv venv
@@ -77,17 +81,7 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 2. Database Setup
-
-```bash
-# Create users table
-psql -h <your-host> -U <your-user> -d <your-database> -f docs/internal/queries/create_users_table.sql
-
-# Or run the migration script if you have existing tables
-psql -h <your-host> -U <your-user> -d <your-database> -f docs/internal/queries/migration_to_match_schema.sql
-```
-
-### 3. Environment Configuration
+### 2. Environment Configuration
 
 Create a `.env` file in the project root:
 
@@ -103,15 +97,16 @@ Edit `.env` with your actual values:
 DATABASE_CONNECTION_STRING=postgresql://username:password@host:port/database_name
 
 # === Facebook API Credentials ===
-FACEBOOK_APP_ID=your_facebook_app_id
-FACEBOOK_APP_SECRET=your_facebook_app_secret
-FACEBOOK_ACCESS_TOKEN=your_facebook_access_token
-FACEBOOK_AD_ACCOUNT_ID=act_your_ad_account_id
+FB_APP_ID=your_facebook_app_id
+FB_APP_SECRET=your_facebook_app_secret
+FB_ACCESS_TOKEN=your_facebook_access_token
+FB_AD_ACCOUNT_ID=act_your_ad_account_id
 
 # === Azure OpenAI Configuration ===
 AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
 AZURE_OPENAI_API_KEY=your_azure_openai_api_key
 AZURE_OPENAI_DEPLOYMENT_NAME=your_deployment_name
+AZURE_INFERENCE_CREDENTIAL=
 
 # === Application Configuration ===
 DEBUG=True
@@ -127,7 +122,7 @@ CACHE_EXPIRATION_HOURS=1
 # === Logging Configuration ===
 LOG_LEVEL=INFO
 LOG_FILE=logs/app.log
-LOG_FORMAT=%(asctime)s - %(name)s - %(levelname)s - %(message)s
+LOG_FORMAT='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 
 # === Prompt Configuration ===
 SYSTEM_PROMPT_SOURCE=default
@@ -136,7 +131,7 @@ DEFAULT_PROMPT_FILE=src/prompts/default_system_prompt.txt
 
 ### 3. Database Setup
 
-Create the database tables:
+Create the database tables by running the following Python script from the root of the project:
 
 ```python
 # Run this Python script to create tables
@@ -189,7 +184,6 @@ curl -X POST "http://127.0.0.1:8000/chat" \
 {
   "response": "¡Hola Cristopher! 👋 Soy tu experto en Marketing Digital...",
   "session_id": "20241201_143022_cristopher_at_example_com",
-  "timestamp": "2024-12-01T14:30:22.123456",
   "user_id": "cristopher@example.com"
 }
 ```
@@ -284,18 +278,17 @@ print(response.json())
 
 ### Tables
 
-- **`facebook_accounts`** - Facebook advertising accounts
-- **`api_cache`** - Cached API responses
-- **`conversation_history`** - Chat conversation history
-- **`prompt_versions`** - System prompt versions
-- **`campaign_performance_data`** - Historical campaign data
+- **`users`**: Stores user information.
+- **`facebook_accounts`**: Manages Facebook advertising accounts.
+- **`user_facebook_accounts`**: Many-to-many relationship between users and Facebook accounts.
+- **`api_cache`**: Caches responses from the Facebook API.
+- **`conversation_history`**: Records the chat history for each user session.
+- **`prompt_versions`**: Manages different versions of system prompts for the agent.
+- **`campaign_performance_data`**: Stores historical campaign performance metrics.
+- **`model_mappings`**: Maps assigned model names to generic model names for cost tracking.
+- **`model_pricing`**: Stores pricing information for different AI models.
+- **`analysis_results`**: Stores the results of analyses generated by the AI.
 
-### Key Relationships
-
-- Users can have multiple Facebook accounts
-- Conversations are linked to users and sessions
-- API cache is linked to ad accounts
-- Campaign data is linked to ad accounts
 
 ## 🔧 Configuration Options
 
@@ -309,11 +302,7 @@ print(response.json())
 | `CACHE_EXPIRATION_HOURS` | `1` | API cache expiration time |
 | `SYSTEM_PROMPT_SOURCE` | `database` | Prompt source: `default` or `database` |
 | `LOG_LEVEL` | `INFO` | Logging level |
-
-### Prompt Management
-
-- **File-based:** Set `SYSTEM_PROMPT_SOURCE=default`
-- **Database-based:** Set `SYSTEM_PROMPT_SOURCE=database` and manage prompts in `prompt_versions` table
+| `LOG_FILE` | `logs/app.log` | Path to the log file. |
 
 ## 🚨 Troubleshooting
 
@@ -331,19 +320,15 @@ print(response.json())
    - Verify Facebook credentials and permissions
    - Check ad account ID format (`act_123456789`)
 
-4. **Logging Issues**
-   - Check `logs/` directory exists and is writable
-   - Verify `LOG_LEVEL` setting
-
 ### Logs
 
-Check application logs:
+The application will create a `logs` directory if it doesn't exist. Check application logs:
 ```bash
 # View real-time logs
 tail -f logs/app.log
 
 # Search for errors
-grep "ERROR" logs/app.log
+grep -i "ERROR" logs/app.log
 ```
 
 ## 🔄 Development Workflow
@@ -356,13 +341,12 @@ grep "ERROR" logs/app.log
 
 ## 📝 Next Steps
 
-- [ ] Add more campaign types (Traffic, Conversion)
-- [ ] Implement user authentication
-- [ ] Add more analytics endpoints
-- [ ] Create frontend interface
-- [ ] Add automated testing
-- [ ] Implement rate limiting
-- [ ] Add monitoring and alerting
+- [ ] Enhance campaign analysis to support more objectives (e.g., Traffic, Conversion).
+- [ ] Implement robust user authentication with OAuth2.
+- [ ] Expand analytics capabilities with more detailed reporting endpoints.
+- [ ] Develop a frontend interface for a more user-friendly experience.
+- [ ] Integrate automated testing (unit and integration tests).
+- [ ] Add comprehensive monitoring and alerting for production.
 
 ## 🤝 Contributing
 
